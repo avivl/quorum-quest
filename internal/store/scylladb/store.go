@@ -14,6 +14,7 @@ import (
 	//ballotconfig "github.com/avivl/configs/gen/go/ballot/v1"
 	"github.com/avivl/quorum-quest/internal/observability"
 	"github.com/avivl/quorum-quest/internal/store"
+
 	//"github.com/avivl/quorum-questinternal/lockservice"
 	"github.com/gocql/gocql"
 )
@@ -156,6 +157,7 @@ func (sdb *Store) KeepAlive(ctx context.Context, service, domain, client_id stri
 // This method does not return any values.
 func (sdb *Store) Close() {
 	sdb.session.Close()
+
 }
 
 func (sdb *Store) validateKeyspace() {

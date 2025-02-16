@@ -2,6 +2,8 @@ package config
 
 import (
 	"fmt"
+	"os"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -9,7 +11,6 @@ import (
 	"github.com/avivl/quorum-quest/internal/store"
 	"github.com/avivl/quorum-quest/internal/store/dynamodb"
 	"github.com/avivl/quorum-quest/internal/store/scylladb"
-	"github.com/fsnotify/fsnotify"
 	"github.com/spf13/viper"
 )
 
@@ -35,12 +36,15 @@ type GlobalConfig[T store.StoreConfig] struct {
 // NewConfigLoader creates a new configuration loader
 func NewConfigLoader(configPath string) *ConfigLoader {
 	v := viper.New()
+
+	// Basic configuration
 	v.SetConfigName("config")
 	v.SetConfigType("yaml")
 	v.AddConfigPath(configPath)
 	v.AddConfigPath(".")
 
-	v.SetEnvPrefix("QuorumQuest")
+	// Environment variable configuration
+	v.SetEnvPrefix("QUORUMQUEST")
 	v.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
 	v.AutomaticEnv()
 
@@ -77,10 +81,7 @@ func (cl *ConfigLoader) notifyWatchers(newConfig interface{}) {
 func LoadConfig[T store.StoreConfig](configPath string, loadFn ConfigLoadFn[T]) (*ConfigLoader, *GlobalConfig[T], error) {
 	cl := NewConfigLoader(configPath)
 
-	// Set defaults
-	setDefaults(cl.v)
-
-	// Read configuration file
+	// Read configuration file (if exists)
 	if err := cl.v.ReadInConfig(); err != nil {
 		if _, ok := err.(viper.ConfigFileNotFoundError); !ok {
 			return nil, nil, fmt.Errorf("error reading config file: %w", err)
@@ -88,36 +89,15 @@ func LoadConfig[T store.StoreConfig](configPath string, loadFn ConfigLoadFn[T]) 
 		fmt.Println("No config file found, using defaults and environment variables")
 	}
 
-	// Load initial configuration
+	// Load configuration (environment variables will take precedence)
 	config, err := loadConfiguration(cl.v, loadFn)
 	if err != nil {
 		return nil, nil, err
 	}
 
-	// Store the current configuration
 	cl.mu.Lock()
 	cl.currentConfig = config
 	cl.mu.Unlock()
-
-	// Setup configuration watching
-	cl.v.WatchConfig()
-	cl.v.OnConfigChange(func(e fsnotify.Event) {
-		fmt.Printf("Config file changed: %s\n", e.Name)
-
-		// Reload configuration
-		newConfig, err := loadConfiguration(cl.v, loadFn)
-		if err != nil {
-			fmt.Printf("Error reloading configuration: %v\n", err)
-			return
-		}
-
-		// Update current configuration and notify watchers
-		cl.mu.Lock()
-		cl.currentConfig = newConfig
-		cl.mu.Unlock()
-
-		cl.notifyWatchers(newConfig)
-	})
 
 	return cl, config, nil
 }
@@ -130,94 +110,75 @@ func loadConfiguration[T store.StoreConfig](v *viper.Viper, loadFn ConfigLoadFn[
 		return nil, fmt.Errorf("failed to load store config: %w", err)
 	}
 
-	// Create and populate global config
-	config := &GlobalConfig[T]{}
-	if err := v.Unmarshal(config); err != nil {
-		return nil, fmt.Errorf("unable to decode global config: %w", err)
-	}
-
-	// Set the store config
-	config.Store = storeConfig
-
-	// Validate configuration
-	if err := validateConfig(config); err != nil {
-		return nil, fmt.Errorf("invalid configuration: %w", err)
+	// Create the global config
+	config := &GlobalConfig[T]{
+		Store: storeConfig,
+		Observability: observability.Config{
+			ServiceName:    getEnvOrValue(v, "QUORUMQUEST_OBSERVABILITY_SERVICENAME", v.GetString("observability.serviceName")),
+			ServiceVersion: getEnvOrValue(v, "QUORUMQUEST_OBSERVABILITY_SERVICEVERSION", v.GetString("observability.serviceVersion")),
+			Environment:    getEnvOrValue(v, "QUORUMQUEST_OBSERVABILITY_ENVIRONMENT", v.GetString("observability.environment")),
+			OTelEndpoint:   getEnvOrValue(v, "QUORUMQUEST_OBSERVABILITY_OTELENDPOINT", v.GetString("observability.otelEndpoint")),
+		},
+		Logger: observability.LoggerConfig{
+			Level: observability.LogLevel(getEnvOrValue(v, "QUORUMQUEST_LOGGER_LEVEL", v.GetString("logger.level"))),
+		},
+		ServerAddress: getEnvOrValue(v, "QUORUMQUEST_SERVERADDRESS", v.GetString("serverAddress")),
 	}
 
 	return config, nil
 }
 
-// validateConfig validates all configuration sections
-func validateConfig[T any](cfg *GlobalConfig[T]) error {
-	// Type assert Store to StoreConfig interface
-	storeConfig, ok := any(cfg.Store).(store.StoreConfig)
-	if !ok {
-		return fmt.Errorf("store config does not implement StoreConfig interface")
-	}
-
-	if err := storeConfig.Validate(); err != nil {
-		return fmt.Errorf("store configuration error: %w", err)
-	}
-
-	// Validate OpenTelemetry config
-	if cfg.Observability.ServiceName == "" {
-		return fmt.Errorf("service name is required")
-	}
-	if cfg.Observability.ServiceVersion == "" {
-		return fmt.Errorf("service version is required")
-	}
-	if cfg.Observability.Environment == "" {
-		return fmt.Errorf("environment is required")
-	}
-	if cfg.Observability.OTelEndpoint == "" {
-		return fmt.Errorf("OpenTelemetry endpoint is required")
-	}
-
-	// Validate server address
-	if cfg.ServerAddress == "" {
-		return fmt.Errorf("server address is required")
-	}
-
-	return nil
-}
-
-// setDefaults sets default values for configuration
-func setDefaults(v *viper.Viper) {
-	// OpenTelemetry defaults
-	v.SetDefault("observability.serviceName", "quorum-quest")
-	v.SetDefault("observability.serviceVersion", "0.1.0")
-	v.SetDefault("observability.environment", "development")
-	v.SetDefault("observability.otelEndpoint", "localhost:4317")
-
-	// Logger defaults
-	v.SetDefault("logger.level", "LOG_LEVELS_INFOLEVEL")
-
-	// Server defaults
-	v.SetDefault("serverAddress", "localhost:5050")
-}
-
 // ScyllaConfigLoader loads ScyllaDB configuration
 func ScyllaConfigLoader(v *viper.Viper) (*scylladb.ScyllaDBConfig, error) {
-	// Set ScyllaDB defaults
-	v.SetDefault("scyllaDbConfig.host", "127.0.0.1")
-	v.SetDefault("scyllaDbConfig.port", 9042)
-	v.SetDefault("scyllaDbConfig.keyspace", "ballot")
-	v.SetDefault("scyllaDbConfig.table", "services")
-	v.SetDefault("scyllaDbConfig.ttl", 15)
-	v.SetDefault("scyllaDbConfig.consistency", "CONSISTENCY_QUORUM")
-	v.SetDefault("scyllaDbConfig.endpoints", []string{"localhost:9042"})
+	// Set ScyllaDB specific defaults first
+	setScyllaDefaults(v)
 
-	config := &scylladb.ScyllaDBConfig{}
-	if err := v.UnmarshalKey("scyllaDbConfig", config); err != nil {
-		return nil, fmt.Errorf("unable to decode ScyllaDB config: %w", err)
+	// Create configuration with environment variables taking precedence
+	config := &scylladb.ScyllaDBConfig{
+		Host:        getEnvOrValue(v, "QUORUMQUEST_SCYLLADBCONFIG_HOST", v.GetString("scyllaDbConfig.host")),
+		Port:        int32(getEnvIntOrValue(v, "QUORUMQUEST_SCYLLADBCONFIG_PORT", v.GetInt("scyllaDbConfig.port"))),
+		Keyspace:    getEnvOrValue(v, "QUORUMQUEST_SCYLLADBCONFIG_KEYSPACE", v.GetString("scyllaDbConfig.keyspace")),
+		Table:       getEnvOrValue(v, "QUORUMQUEST_SCYLLADBCONFIG_TABLE", v.GetString("scyllaDbConfig.table")),
+		TTL:         int32(getEnvIntOrValue(v, "QUORUMQUEST_SCYLLADBCONFIG_TTL", v.GetInt("scyllaDbConfig.ttl"))),
+		Consistency: getEnvOrValue(v, "QUORUMQUEST_SCYLLADBCONFIG_CONSISTENCY", v.GetString("scyllaDbConfig.consistency")),
+		Endpoints:   getEnvSliceOrValue(v, "QUORUMQUEST_SCYLLADBCONFIG_ENDPOINTS", v.GetStringSlice("scyllaDbConfig.endpoints")),
 	}
 
-	// Validate configuration
+	// Debug output
+	fmt.Printf("Loading ScyllaDB config from defaults/env:\n")
+	fmt.Printf("Host: %s (env: %s)\n", config.Host, os.Getenv("QUORUMQUEST_SCYLLADBCONFIG_HOST"))
+	fmt.Printf("Port: %d (env: %s)\n", config.Port, os.Getenv("QUORUMQUEST_SCYLLADBCONFIG_PORT"))
+	fmt.Printf("Keyspace: %s (env: %s)\n", config.Keyspace, os.Getenv("QUORUMQUEST_SCYLLADBCONFIG_KEYSPACE"))
+	fmt.Printf("Table: %s\n", config.Table)
+
 	if err := config.Validate(); err != nil {
 		return nil, fmt.Errorf("invalid ScyllaDB configuration: %w", err)
 	}
 
 	return config, nil
+}
+
+func getEnvOrValue(v *viper.Viper, envKey, defaultValue string) string {
+	if value := os.Getenv(envKey); value != "" {
+		return value
+	}
+	return defaultValue
+}
+
+func getEnvIntOrValue(v *viper.Viper, envKey string, defaultValue int) int {
+	if value := os.Getenv(envKey); value != "" {
+		if intValue, err := strconv.Atoi(value); err == nil {
+			return intValue
+		}
+	}
+	return defaultValue
+}
+
+func getEnvSliceOrValue(v *viper.Viper, envKey string, defaultValue []string) []string {
+	if value := os.Getenv(envKey); value != "" {
+		return strings.Split(value, ",")
+	}
+	return defaultValue
 }
 
 // DynamoConfigLoader loads DynamoDB configuration
@@ -241,6 +202,35 @@ func DynamoConfigLoader(v *viper.Viper) (*dynamodb.DynamoDBConfig, error) {
 	}
 
 	return config, nil
+}
+
+// setScyllaDefaults sets default values for ScyllaDB configuration
+func setScyllaDefaults(v *viper.Viper) {
+	defaults := map[string]interface{}{
+		"scyllaDbConfig": map[string]interface{}{
+			"host":        "127.0.0.1",
+			"port":        9042,
+			"keyspace":    "ballot",
+			"table":       "services",
+			"ttl":         15,
+			"consistency": "CONSISTENCY_QUORUM",
+			"endpoints":   []string{"localhost:9042"},
+		},
+		"observability": map[string]interface{}{
+			"serviceName":    "quorum-quest",
+			"serviceVersion": "0.1.0",
+			"environment":    "development",
+			"otelEndpoint":   "localhost:4317",
+		},
+		"logger": map[string]interface{}{
+			"level": "LOG_LEVELS_INFOLEVEL",
+		},
+		"serverAddress": "localhost:5050",
+	}
+
+	for key, value := range defaults {
+		v.SetDefault(key, value)
+	}
 }
 
 // Example usage:

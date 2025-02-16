@@ -1,0 +1,20 @@
+scyllaDbConfig:
+  host: "127.0.0.1"
+  port: 9042
+  keyspace: "ballot"
+  table: "services"
+  ttl: 15
+  consistency: "CONSISTENCY_QUORUM"
+  endpoints:
+    - "localhost:9042"
+
+observability:
+  serviceName: "my-service"
+  serviceVersion: "1.0.0"
+  environment: "production"
+  otelEndpoint: "localhost:4317"
+
+logger:
+  level: "LOG_LEVELS_INFOLEVEL"
+
+serverAddress: "localhost:5050"

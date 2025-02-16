@@ -1,0 +1,15 @@
+version: v1
+name: buf.build/avivl/quorum-quest
+deps:
+  - buf.build/googleapis/googleapis
+  - buf.build/protocolbuffers/python
+  - buf.build/grpc/python
+breaking:
+  use:
+    - FILE
+lint:
+  use:
+    - DEFAULT
+  ignore_only:
+    PACKAGE_VERSION_SUFFIX:
+      - api/proto/v1/quorum_quest_api.proto

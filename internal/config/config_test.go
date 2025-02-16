@@ -1,7 +1,6 @@
 package config
 
 import (
-	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -11,34 +10,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
-
-func setupTestDirectory(t *testing.T, filename string) (string, error) {
-	// Create temp directory
-	tmpDir := t.TempDir()
-
-	// Get absolute path to testdata directory
-	wd, err := os.Getwd()
-	if err != nil {
-		return "", fmt.Errorf("failed to get working directory: %w", err)
-	}
-
-	srcPath := filepath.Join(wd, "testdata", filename)
-	dstPath := filepath.Join(tmpDir, "config.yaml")
-
-	// Read source file
-	data, err := os.ReadFile(srcPath)
-	if err != nil {
-		return "", fmt.Errorf("failed to read source file %s: %w", srcPath, err)
-	}
-
-	// Write to destination
-	err = os.WriteFile(dstPath, data, 0644)
-	if err != nil {
-		return "", fmt.Errorf("failed to write config file: %w", err)
-	}
-
-	return tmpDir, nil
-}
 
 func TestEnvironmentOverrides(t *testing.T) {
 	// Create a temporary directory

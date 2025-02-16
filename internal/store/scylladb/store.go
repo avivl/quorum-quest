@@ -9,13 +9,10 @@ import (
 	"strconv"
 	"time"
 
-	//"github.com/avivl/quorum-quest/internal/observability"
-
-	//ballotconfig "github.com/avivl/configs/gen/go/ballot/v1"
 	"github.com/avivl/quorum-quest/internal/observability"
 	"github.com/avivl/quorum-quest/internal/store"
 
-	//"github.com/avivl/quorum-questinternal/lockservice"
+	"github.com/avivl/quorum-quest/internal/lockservice"
 	"github.com/gocql/gocql"
 )
 
@@ -39,11 +36,10 @@ func init() {
 // If more than one endpoint is provided, it returns ErrMultipleEndpointsUnsupported.
 // If the configuration options are missing or invalid, it returns ErrConfigOptionMissing.
 func newStore(ctx context.Context, options lockservice.Config, logger *observability.SLogger) (store.Store, error) {
-	cfg, ok := options.(*ballotconfig.BallotConfig)
+	cfg, ok := options.(*ScyllaDBConfig)
 	if !ok && options != nil {
 		return nil, &store.InvalidConfigurationError{Store: StoreName, Config: options}
 	}
-
 	return New(ctx, cfg, logger)
 }
 
@@ -58,32 +54,51 @@ type Store struct {
 	TryAcquireLockQuery string
 	ValidateLockQuery   string
 	ReleaseLockQuery    string
+	config              *ScyllaDBConfig
+}
+
+// GetConfig returns the current store configuration
+func (s *Store) GetConfig() store.StoreConfig {
+	return s.config
+}
+
+// parseConsistency converts string consistency to gocql.Consistency
+func parseConsistency(c string) gocql.Consistency {
+	switch c {
+	case "CONSISTENCY_QUORUM":
+		return gocql.Quorum
+	case "CONSISTENCY_ONE":
+		return gocql.One
+	case "CONSISTENCY_ALL":
+		return gocql.All
+	default:
+		return gocql.Quorum
+	}
 }
 
 // New creates a new ScyllaDB client.
-
-func New(ctx context.Context, config *ballotconfig.BallotConfig, logger *observability.SLogger) (*Store, error) {
-	if len(config.ScyllaDbConfig.Endpoints) > 1 {
+func New(ctx context.Context, config *ScyllaDBConfig, logger *observability.SLogger) (*Store, error) {
+	if len(config.Endpoints) > 1 {
 		return nil, ErrMultipleEndpointsUnsupported
 	}
 	if config == nil {
 		return nil, ErrConfigOptionMissing
 	}
-	cluster := gocql.NewCluster(config.ScyllaDbConfig.Host + ":" + strconv.Itoa(int(config.ScyllaDbConfig.Port)))
+	cluster := gocql.NewCluster(config.Host + ":" + strconv.Itoa(int(config.Port)))
 	cluster.ProtoVersion = 4
-
-	cluster.Consistency = gocql.Consistency(config.ScyllaDbConfig.Consistency)
+	cluster.Consistency = parseConsistency(config.Consistency)
 	session, err := cluster.CreateSession()
 	if err != nil {
 		logger.Errorf("Error creating session: %v", err)
 		return nil, err
 	}
 	sdb := &Store{session: session,
-		tableName:     config.ScyllaDbConfig.Table,
-		keyspaceName:  config.ScyllaDbConfig.Keyspace,
-		fullTableName: config.ScyllaDbConfig.Keyspace + "." + config.ScyllaDbConfig.Table,
-		ttl:           int32(math.Round((time.Duration(config.ScyllaDbConfig.Ttl).Seconds() * 1000000000))),
+		tableName:     config.Table,
+		keyspaceName:  config.Keyspace,
+		fullTableName: config.Keyspace + "." + config.Table,
+		ttl:           int32(math.Round((time.Duration(config.TTL).Seconds() * 1000000000))),
 		l:             logger,
+		config:        config,
 	}
 	sdb.initSession()
 	return sdb, nil

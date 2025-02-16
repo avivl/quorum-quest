@@ -1,0 +1,8 @@
+observability:
+  serviceName: "test-service"
+  serviceVersion: "1.0.0"
+  environment: "test"
+  otelEndpoint: "localhost:4317"
+
+logger:
+  level: "LOG_LEVELS_INFOLEVEL" 

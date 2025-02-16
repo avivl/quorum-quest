@@ -27,11 +27,11 @@ func Register(name string, cttr Constructor) {
 	defer constructorsMu.Unlock()
 
 	if cttr == nil {
-		panic("ballot: Register constructor is nil")
+		panic("quorum-ques: Register constructor is nil")
 	}
 
 	if _, dup := constructors[name]; dup {
-		panic("ballot: Register called twice for constructor " + name)
+		panic("quorum-ques: Register called twice for constructor " + name)
 	}
 
 	constructors[name] = cttr

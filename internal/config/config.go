@@ -210,7 +210,7 @@ func setScyllaDefaults(v *viper.Viper) {
 		"scyllaDbConfig": map[string]interface{}{
 			"host":        "127.0.0.1",
 			"port":        9042,
-			"keyspace":    "ballot",
+			"keyspace":    "quorum-ques",
 			"table":       "services",
 			"ttl":         15,
 			"consistency": "CONSISTENCY_QUORUM",

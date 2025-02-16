@@ -20,7 +20,7 @@ func TestEnvironmentOverrides(t *testing.T) {
 scyllaDbConfig:
   host: "127.0.0.1"
   port: 9042
-  keyspace: "ballot"
+  keyspace: "quorum-ques"
   table: "services"
   ttl: 15
   consistency: "CONSISTENCY_QUORUM"
@@ -259,7 +259,7 @@ observability:
 		// Verify default values
 		assert.Equal(t, "127.0.0.1", cfg.Store.Host)
 		assert.Equal(t, int32(9042), cfg.Store.Port)
-		assert.Equal(t, "ballot", cfg.Store.Keyspace)
+		assert.Equal(t, "quorum-ques", cfg.Store.Keyspace)
 		assert.Equal(t, "services", cfg.Store.Table)
 	})
 }
@@ -276,7 +276,7 @@ func TestDefaultValues(t *testing.T) {
 	// Verify Store defaults
 	assert.Equal(t, "127.0.0.1", cfg.Store.Host, "Should use default host")
 	assert.Equal(t, int32(9042), cfg.Store.Port, "Should use default port")
-	assert.Equal(t, "ballot", cfg.Store.Keyspace, "Should use default keyspace")
+	assert.Equal(t, "quorum-ques", cfg.Store.Keyspace, "Should use default keyspace")
 	assert.Equal(t, "services", cfg.Store.Table, "Should use default table")
 	assert.Equal(t, int32(15), cfg.Store.TTL, "Should use default TTL")
 	assert.Equal(t, "CONSISTENCY_QUORUM", cfg.Store.Consistency, "Should use default consistency")

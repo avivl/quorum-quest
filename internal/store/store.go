@@ -12,5 +12,5 @@ type Store interface {
 	KeepAlive(ctx context.Context, service, domain, clientId string, ttl int32) time.Duration
 	Close()
 	// GetConfig returns the current store configuration
-	GetConfig() Config
+	GetConfig() StoreConfig
 }

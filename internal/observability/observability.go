@@ -39,8 +39,9 @@ type MetricsClient interface {
 
 // OTelMetrics implements MetricsClient using OpenTelemetry
 type OTelMetrics struct {
-	meter  metric.Meter
-	logger *SLogger
+	meter            metric.Meter
+	logger           *SLogger
+	latencyHistogram metric.Float64Histogram
 }
 
 // InitProvider initializes OpenTelemetry with the given configuration
@@ -109,15 +110,17 @@ func InitProvider(ctx context.Context, cfg Config) (func(), error) {
 }
 
 // NewMetricsClient creates a new OpenTelemetry metrics client
-func NewMetricsClient(cfg Config, l *SLogger) (*OTelMetrics, error) {
-	meter := otel.GetMeterProvider().Meter(
-		cfg.ServiceName,
-		metric.WithInstrumentationVersion(cfg.ServiceVersion),
-	)
+func NewMetricsClient(cfg Config, logger *SLogger) (*OTelMetrics, error) {
+	meter := otel.GetMeterProvider().Meter(cfg.ServiceName)
+	latencyHistogram, err := meter.Float64Histogram("operation.latency")
+	if err != nil {
+		return nil, fmt.Errorf("failed to create latency histogram: %w", err)
+	}
 
 	return &OTelMetrics{
-		meter:  meter,
-		logger: l,
+		meter:            meter,
+		logger:           logger,
+		latencyHistogram: latencyHistogram,
 	}, nil
 }
 
@@ -228,4 +231,11 @@ func newSLogger(logger *zap.Logger) *SLogger {
 	return &SLogger{
 		SugaredLogger: logger.Sugar(),
 	}
+}
+
+// RecordLatency records a latency metric with tags
+func (m *OTelMetrics) RecordLatency(ctx context.Context, duration time.Duration, tags ...string) error {
+	attrs := attributesFromTags(tags)
+	m.latencyHistogram.Record(ctx, float64(duration.Milliseconds()), metric.WithAttributes(attrs...))
+	return nil
 }

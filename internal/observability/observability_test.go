@@ -54,10 +54,10 @@ func TestLogger(t *testing.T) {
 
 		ctx := context.Background()
 		logger.InfoCtx(ctx, "test message")
-		//TDOD once ther will a real provider agent the value should be 1 and not 2
+		// TODO once ther will a real provider agent the value should be 1 and not 2
 		require.Equal(t, 2, logs.Len())
 		entry := logs.All()[0]
-		//TDOD once ther will a real provider agent the value should be test message
+		// TODO once ther will a real provider agent the value should be test message
 		assert.Equal(t, "No trace context found", entry.Message)
 	})
 }
@@ -128,9 +128,9 @@ func TestTracing(t *testing.T) {
 		ctx := context.Background()
 		logger.InfoCtx(ctx, "test message with trace")
 		entries := recorded.All()
-		//TDOD once ther will a real provider agent the value should be 1 and not 2
+		// TODO once ther will a real provider agent the value should be 1 and not 2
 		require.Equal(t, 2, len(entries))
-		//TDOD once ther will a real provider agent the value should be test message with trace and not No trace context found"
+		// TODO once ther will a real provider agent the value should be test message with trace and not No trace context found"
 		assert.Equal(t, "No trace context found", entries[0].Message)
 	})
 

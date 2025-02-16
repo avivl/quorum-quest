@@ -153,7 +153,7 @@ func TestLoadFromFiles(t *testing.T) {
 		scyllaConfig := `
 scyllaDbConfig:
   host: "scylla-host"
-  port: 9043
+  port: 9042
   keyspace: "my-keyspace"
   table: "my-table"
   ttl: 30

@@ -1,20 +1,16 @@
 dynamoDbConfig:
-  region: "us-west-2"
-  table: "services"
-  ttl: 15
-  endpoints:
-    - "dynamodb.us-west-2.amazonaws.com"
-  profile: "default"  # Optional: AWS profile name
-  accessKeyId: ""     # Optional: AWS access key
-  secretAccessKey: "" # Optional: AWS secret key
-
+region: "us-west-2"
+table: "services"
+ttl: 15
+endpoints:
+- "dynamodb.us-west-2.amazonaws.com"
+profile: "default"
+maxRetries: 3
 observability:
-  serviceName: "my-service"
-  serviceVersion: "1.0.0"
-  environment: "production"
-  otelEndpoint: "localhost:4317"
-
+serviceName: "quorum-quest"
+serviceVersion: "0.1.0"
+environment: "development"
+otelEndpoint: "localhost:4317"
 logger:
-  level: "LOG_LEVELS_INFOLEVEL"
-
+level: "LOG_LEVELS_INFOLEVEL"
 serverAddress: "localhost:5050"

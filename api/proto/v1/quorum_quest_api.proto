@@ -1,0 +1,52 @@
+// api/proto/v1/quorum_quest_api.proto
+syntax = "proto3";
+
+package quorum.quest.api.v1;
+
+import "google/protobuf/duration.proto";
+
+option go_package = "github.com/avivl/quorum-quest/api/gen/go/v1;apiv1";
+
+// LeaderElectionService provides distributed leader election capabilities
+service LeaderElectionService {
+  // TryAcquireLock attempts to acquire leadership for a given service/domain
+  rpc TryAcquireLock(TryAcquireLockRequest) returns (TryAcquireLockResponse) {}
+  
+  // ReleaseLock voluntarily releases leadership
+  rpc ReleaseLock(ReleaseLockRequest) returns (ReleaseLockResponse) {}
+  
+  // KeepAlive extends the leadership lease
+  rpc KeepAlive(KeepAliveRequest) returns (KeepAliveResponse) {}
+}
+
+message TryAcquireLockRequest {
+  string service = 1;  // Service identifier
+  string domain = 2;   // Domain scope
+  string client_id = 3; // Unique client identifier
+  int64 ttl = 4;       // Time-to-live for the lock in seconds
+}
+
+message TryAcquireLockResponse {
+  bool is_leader = 1;  // Whether leadership was acquired
+}
+
+message ReleaseLockRequest {
+  string service = 1;   // Service identifier
+  string domain = 2;    // Domain scope
+  string client_id = 3; // Client releasing the lock
+}
+
+message ReleaseLockResponse {
+  // Empty response as the operation is fire-and-forget
+}
+
+message KeepAliveRequest {
+  string service = 1;   // Service identifier
+  string domain = 2;    // Domain scope
+  string client_id = 3; // Client extending the lease
+  int64 ttl = 4;       // New TTL in seconds
+}
+
+message KeepAliveResponse {
+  google.protobuf.Duration lease_length = 1; // Duration of the new lease
+}

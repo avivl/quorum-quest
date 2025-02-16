@@ -1,0 +1,45 @@
+version: v1
+managed:
+  enabled: true
+  go_package_prefix:
+    default: github.com/avivl/quorum-quest/api/gen/go
+    except:
+      - buf.build/googleapis/googleapis
+
+plugins:
+  # Go
+  - plugin: go
+    out: api/gen/go
+    opt: paths=source_relative
+  - plugin: go-grpc
+    out: api/gen/go
+    opt: paths=source_relative
+
+  # Python
+  - plugin: buf.build/protocolbuffers/python:v24.4
+    out: api/gen/python
+  - plugin: buf.build/grpc/python:v1.60.0
+    out: api/gen/python
+
+  # Rust
+  - plugin: prost
+    out: api/gen/rust/src
+    opt: compile_well_known_types=true,file_descriptor_set=true
+  - plugin: tonic
+    out: api/gen/rust/src
+    opt: compile_well_known_types=true
+
+  # TypeScript
+  - plugin: es
+    out: api/gen/typescript
+    opt: target=ts
+  - plugin: connect-web
+    out: api/gen/typescript
+    opt: target=ts
+
+  # Java
+  - plugin: java
+    out: api/gen/java
+    opt: lite
+  - plugin: grpc-java
+    out: api/gen/java

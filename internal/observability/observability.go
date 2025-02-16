@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetricgrpc"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
 	"go.opentelemetry.io/otel/metric"
@@ -223,12 +224,19 @@ func NewTestLogger() (*SLogger, *observer.ObservedLogs, error) {
 }
 
 // Helper function to convert string tags to OpenTelemetry attributes
-func attributesFromTags(tags []string) []metric.Attribute {
-	attrs := make([]metric.Attribute, 0, len(tags)/2)
+func attributesFromTags(tags []string) []attribute.KeyValue {
+	attrs := make([]attribute.KeyValue, 0, len(tags)/2)
 	for i := 0; i < len(tags); i += 2 {
 		if i+1 < len(tags) {
-			attrs = append(attrs, metric.String(tags[i], tags[i+1]))
+			attrs = append(attrs, attribute.String(tags[i], tags[i+1]))
 		}
 	}
 	return attrs
+}
+
+// Add this function near the other SLogger-related code
+func newSLogger(logger *zap.Logger) *SLogger {
+	return &SLogger{
+		SugaredLogger: logger.Sugar(),
+	}
 }

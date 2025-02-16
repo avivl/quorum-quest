@@ -2,20 +2,17 @@ package scylladb
 
 import (
 	"errors"
-	"fmt"
-
-	"github.com/spf13/viper"
 )
 
 // ScyllaDBConfig implements the Config interface for ScyllaDB
 type ScyllaDBConfig struct {
-	Host        string   `json:"host"`
-	Port        int32    `json:"port"`
-	Keyspace    string   `json:"keyspace"`
-	Table       string   `json:"table"`
-	TTL         int32    `json:"ttl"`
-	Consistency string   `json:"consistency"`
-	Endpoints   []string `json:"endpoints"`
+	Host        string   `yaml:"host"`
+	Port        int32    `yaml:"port"`
+	Keyspace    string   `yaml:"keyspace"`
+	Table       string   `yaml:"table"`
+	TTL         int32    `yaml:"ttl"`
+	Consistency string   `yaml:"consistency"`
+	Endpoints   []string `yaml:"endpoints"`
 }
 
 func (c *ScyllaDBConfig) GetTableName() string {
@@ -67,32 +64,3 @@ func NewScyllaDBConfig() *ScyllaDBConfig {
 		Endpoints:   []string{"localhost:9042"},
 	}
 }
-
-func ScyllaConfigLoader(v *viper.Viper) (*ScyllaDBConfig, error) {
-	// Set ScyllaDB defaults
-	v.SetDefault("scylla.host", "127.0.0.1")
-	v.SetDefault("scylla.port", 9042)
-	v.SetDefault("scylla.keyspace", "ballot")
-	v.SetDefault("scylla.table", "services")
-	v.SetDefault("scylla.ttl", 15)
-	v.SetDefault("scylla.consistency", "CONSISTENCY_QUORUM")
-	v.SetDefault("scylla.endpoints", []string{"localhost:9042"})
-
-	config := &ScyllaDBConfig{}
-	if err := v.UnmarshalKey("scylla", config); err != nil {
-		return nil, fmt.Errorf("unable to decode ScyllaDB config: %w", err)
-	}
-
-	if err := config.Validate(); err != nil {
-		return nil, fmt.Errorf("invalid ScyllaDB configuration: %w", err)
-	}
-
-	return config, nil
-}
-
-//example
-// Load ScyllaDB configuration
-// scyllaConfig, err := LoadConfig("/etc/myapp", "scylla", ScyllaConfigLoader)
-// if err != nil {
-// 	log.Fatalf("Failed to load ScyllaDB configuration: %v", err)
-// }

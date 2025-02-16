@@ -1,5 +1,7 @@
 package observability
 
+import "go.uber.org/zap/zapcore"
+
 // LogLevel represents logging levels
 type LogLevel string
 
@@ -10,10 +12,29 @@ const (
 	LogLevelError LogLevel = "LOG_LEVELS_ERRORLEVEL"
 )
 
-// ObservabilityConfig represents OpenTelemetry configuration
-type ObservabilityConfig struct {
-	ServiceName    string `json:"serviceName" mapstructure:"serviceName"`
-	ServiceVersion string `json:"serviceVersion" mapstructure:"serviceVersion"`
-	Environment    string `json:"environment" mapstructure:"environment"`
-	OTelEndpoint   string `json:"otelEndpoint" mapstructure:"otelEndpoint"`
+// GetZapLevel converts LogLevel to zapcore.Level
+func (l LogLevel) GetZapLevel() zapcore.Level {
+	switch l {
+	case LogLevelDebug:
+		return zapcore.DebugLevel
+	case LogLevelWarn:
+		return zapcore.WarnLevel
+	case LogLevelError:
+		return zapcore.ErrorLevel
+	default:
+		return zapcore.InfoLevel
+	}
+}
+
+// Config represents OpenTelemetry configuration
+type Config struct {
+	ServiceName    string `yaml:"serviceName"`
+	ServiceVersion string `yaml:"serviceVersion"`
+	Environment    string `yaml:"environment"`
+	OTelEndpoint   string `yaml:"otelEndpoint"`
+}
+
+// LoggerConfig represents logging configuration
+type LoggerConfig struct {
+	Level LogLevel `yaml:"level"`
 }

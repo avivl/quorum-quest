@@ -19,7 +19,6 @@ import (
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 	"go.uber.org/zap/zaptest/observer"
-	"google.golang.org/grpc"
 )
 
 // SLogger is a wrapper for a zap sugared logger with OpenTelemetry integration
@@ -44,14 +43,6 @@ type OTelMetrics struct {
 	logger *SLogger
 }
 
-// Config holds the configuration for observability components
-type Config struct {
-	ServiceName    string
-	ServiceVersion string
-	Environment    string
-	OTelEndpoint   string
-}
-
 // InitProvider initializes OpenTelemetry with the given configuration
 func InitProvider(ctx context.Context, cfg Config) (func(), error) {
 	if cfg.OTelEndpoint == "" {
@@ -74,7 +65,6 @@ func InitProvider(ctx context.Context, cfg Config) (func(), error) {
 	traceExporter, err := otlptracegrpc.New(ctx,
 		otlptracegrpc.WithEndpoint(cfg.OTelEndpoint),
 		otlptracegrpc.WithInsecure(),
-		otlptracegrpc.WithDialOption(grpc.WithBlock()),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create trace exporter: %w", err)
@@ -94,7 +84,6 @@ func InitProvider(ctx context.Context, cfg Config) (func(), error) {
 	metricExporter, err := otlpmetricgrpc.New(ctx,
 		otlpmetricgrpc.WithEndpoint(cfg.OTelEndpoint),
 		otlpmetricgrpc.WithInsecure(),
-		otlpmetricgrpc.WithDialOption(grpc.WithBlock()),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create metric exporter: %w", err)

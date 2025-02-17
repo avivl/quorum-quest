@@ -23,7 +23,7 @@ message TryAcquireLockRequest {
   string service = 1;  // Service identifier
   string domain = 2;   // Domain scope
   string client_id = 3; // Unique client identifier
-  int64 ttl = 4;       // Time-to-live for the lock in seconds
+  int32 ttl = 4;       // Time-to-live for the lock in seconds
 }
 
 message TryAcquireLockResponse {
@@ -44,7 +44,7 @@ message KeepAliveRequest {
   string service = 1;   // Service identifier
   string domain = 2;    // Domain scope
   string client_id = 3; // Client extending the lease
-  int64 ttl = 4;       // New TTL in seconds
+  int32 ttl = 4;       // New TTL in seconds
 }
 
 message KeepAliveResponse {

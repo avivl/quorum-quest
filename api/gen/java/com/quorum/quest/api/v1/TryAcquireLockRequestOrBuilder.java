@@ -74,8 +74,8 @@ public interface TryAcquireLockRequestOrBuilder extends
    * Time-to-live for the lock in seconds
    * </pre>
    *
-   * <code>int64 ttl = 4 [json_name = "ttl"];</code>
+   * <code>int32 ttl = 4 [json_name = "ttl"];</code>
    * @return The ttl.
    */
-  long getTtl();
+  int getTtl();
 }

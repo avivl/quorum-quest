@@ -31,11 +31,10 @@ services:
       interval: 5s
       timeout: 10s
       retries: 18
-  # protoconf:
-  #   image: protoconf/protoconf:latest
-  #   command:
-  #     - agent
-  #     - -dev
-  #     - configs/
-  #   ports:
-  #     - 4300:4300
+  otel-collector:
+    container_name: otel-collector
+    image: otel/opentelemetry-collector-contrib:latest
+    restart: always
+    ports:
+      - 4317:4317
+  

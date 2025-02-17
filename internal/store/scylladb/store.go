@@ -84,23 +84,29 @@ func New(ctx context.Context, config *ScyllaDBConfig, logger *observability.SLog
 	if config == nil {
 		return nil, ErrConfigOptionMissing
 	}
+
 	cluster := gocql.NewCluster(config.Host + ":" + strconv.Itoa(int(config.Port)))
 	cluster.ProtoVersion = 4
 	cluster.Consistency = parseConsistency(config.Consistency)
+
 	session, err := cluster.CreateSession()
 	if err != nil {
 		logger.Errorf("Error creating session: %v", err)
-		return nil, err
+		return nil, fmt.Errorf("failed to create session: %w", err)
 	}
-	sdb := &Store{session: session,
+
+	sdb := &Store{
+		session:       session,
 		tableName:     config.Table,
 		keyspaceName:  config.Keyspace,
-		fullTableName: config.Keyspace + "." + config.Table,
+		fullTableName: fmt.Sprintf(`"%s"."%s"`, config.Keyspace, config.Table), // Use double quotes here too
 		ttl:           int32(math.Round((time.Duration(config.TTL).Seconds() * 1000000000))),
 		l:             logger,
 		config:        config,
 	}
+
 	sdb.initSession()
+
 	return sdb, nil
 }
 
@@ -112,6 +118,33 @@ func (sdb *Store) initSession() {
 	sdb.ReleaseLockQuery = fmt.Sprintf("DELETE FROM %s WHERE service =? and  domain =? and client_id =? USING TTL ?", sdb.fullTableName)
 
 }
+func (sdb *Store) validateKeyspace() {
+	err := sdb.session.Query(fmt.Sprintf(`CREATE KEYSPACE IF NOT EXISTS %s
+	WITH replication = {
+		'class' : 'SimpleStrategy',
+		'replication_factor' :3
+	}`, sdb.keyspaceName)).Exec()
+	if err != nil {
+		sdb.l.Fatal(err)
+	}
+
+}
+
+func (sdb *Store) validateTable() {
+
+	err := sdb.session.Query(fmt.Sprintf(`CREATE Table IF NOT EXISTS %s.%s
+	(service text,
+domain  text,
+client_id text,
+PRIMARY KEY (service,domain))
+WITH default_time_to_live = 15;
+`, sdb.keyspaceName, sdb.tableName)).Exec()
+	if err != nil {
+		sdb.l.Fatal(err)
+	}
+
+}
+
 func (sdb *Store) TryAcquireLock(ctx context.Context, service, domain, client_id string, ttl int32) bool {
 	_ttl := ttl
 	if ttl == 0 {
@@ -131,9 +164,7 @@ func (sdb *Store) TryAcquireLock(ctx context.Context, service, domain, client_id
 		return false
 	}
 	return true
-
 }
-
 func (sdb *Store) ReleaseLock(ctx context.Context, service, domain, client_id string) {
 	err := sdb.session.Query(sdb.ReleaseLockQuery,
 		service, domain, client_id).WithContext(ctx).Exec()
@@ -161,43 +192,7 @@ func (sdb *Store) KeepAlive(ctx context.Context, service, domain, client_id stri
 	}
 	return time.Duration(sdb.ttl) * time.Second
 }
-
-// Close the store connection.
-// Close the store connection.
-// This method closes the underlying ScyllaDB session.
-// It is important to call this method when the Store instance is no longer needed to free up resources.
-//
-// No parameters are required for this method.
-//
-// This method does not return any values.
 func (sdb *Store) Close() {
 	sdb.session.Close()
-
-}
-
-func (sdb *Store) validateKeyspace() {
-	err := sdb.session.Query(fmt.Sprintf(`CREATE KEYSPACE IF NOT EXISTS %s
-	WITH replication = {
-		'class' : 'SimpleStrategy',
-		'replication_factor' :3
-	}`, sdb.keyspaceName)).Exec()
-	if err != nil {
-		sdb.l.Fatal(err)
-	}
-
-}
-
-func (sdb *Store) validateTable() {
-
-	err := sdb.session.Query(fmt.Sprintf(`CREATE Table IF NOT EXISTS %s.%s
-	(service text,
-domain  text,
-client_id text,
-PRIMARY KEY (service,domain))
-WITH default_time_to_live = 15;
-`, sdb.keyspaceName, sdb.tableName)).Exec()
-	if err != nil {
-		sdb.l.Fatal(err)
-	}
 
 }

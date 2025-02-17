@@ -1,0 +1,41 @@
+services:
+  scylla:
+    container_name: scylla
+    image: scylladb/scylla:latest
+    restart: always
+    command: --smp 1 --memory 750M --overprovisioned 1 --reactor-backend=epoll
+    ports:
+      - 9042:9042
+    healthcheck:
+      test: ["CMD", "cqlsh", "-e", "select * from system.local"]
+      interval: 10s
+      timeout: 5s
+      retries: 18
+  scylla-2:
+    container_name: scylla-2
+    image: scylladb/scylla:latest
+    restart: always
+    command: --seeds=scylla --smp 1 --memory 750M --overprovisioned 1 --reactor-backend=epoll
+    healthcheck:
+      test: ["CMD", "cqlsh", "-e", "select * from system.local"]
+      interval: 5s
+      timeout: 10s
+      retries: 18
+  scylla-3:
+    container_name: scylla-3
+    image: scylladb/scylla:latest
+    restart: always
+    command: --seeds=scylla --smp 1 --memory 750M --overprovisioned 1 --reactor-backend=epoll
+    healthcheck:
+      test: ["CMD", "cqlsh", "-e", "select * from system.local"]
+      interval: 5s
+      timeout: 10s
+      retries: 18
+  # protoconf:
+  #   image: protoconf/protoconf:latest
+  #   command:
+  #     - agent
+  #     - -dev
+  #     - configs/
+  #   ports:
+  #     - 4300:4300

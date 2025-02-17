@@ -223,17 +223,17 @@ public  final class TryAcquireLockRequest extends
   }
 
   public static final int TTL_FIELD_NUMBER = 4;
-  private long ttl_;
+  private int ttl_;
   /**
    * <pre>
    * Time-to-live for the lock in seconds
    * </pre>
    *
-   * <code>int64 ttl = 4 [json_name = "ttl"];</code>
+   * <code>int32 ttl = 4 [json_name = "ttl"];</code>
    * @return The ttl.
    */
   @java.lang.Override
-  public long getTtl() {
+  public int getTtl() {
     return ttl_;
   }
   /**
@@ -241,10 +241,10 @@ public  final class TryAcquireLockRequest extends
    * Time-to-live for the lock in seconds
    * </pre>
    *
-   * <code>int64 ttl = 4 [json_name = "ttl"];</code>
+   * <code>int32 ttl = 4 [json_name = "ttl"];</code>
    * @param value The ttl to set.
    */
-  private void setTtl(long value) {
+  private void setTtl(int value) {
     
     ttl_ = value;
   }
@@ -253,11 +253,11 @@ public  final class TryAcquireLockRequest extends
    * Time-to-live for the lock in seconds
    * </pre>
    *
-   * <code>int64 ttl = 4 [json_name = "ttl"];</code>
+   * <code>int32 ttl = 4 [json_name = "ttl"];</code>
    */
   private void clearTtl() {
 
-    ttl_ = 0L;
+    ttl_ = 0;
   }
 
   public static com.quorum.quest.api.v1.TryAcquireLockRequest parseFrom(
@@ -569,11 +569,11 @@ public  final class TryAcquireLockRequest extends
      * Time-to-live for the lock in seconds
      * </pre>
      *
-     * <code>int64 ttl = 4 [json_name = "ttl"];</code>
+     * <code>int32 ttl = 4 [json_name = "ttl"];</code>
      * @return The ttl.
      */
     @java.lang.Override
-    public long getTtl() {
+    public int getTtl() {
       return instance.getTtl();
     }
     /**
@@ -581,11 +581,11 @@ public  final class TryAcquireLockRequest extends
      * Time-to-live for the lock in seconds
      * </pre>
      *
-     * <code>int64 ttl = 4 [json_name = "ttl"];</code>
+     * <code>int32 ttl = 4 [json_name = "ttl"];</code>
      * @param value The ttl to set.
      * @return This builder for chaining.
      */
-    public Builder setTtl(long value) {
+    public Builder setTtl(int value) {
       copyOnWrite();
       instance.setTtl(value);
       return this;
@@ -595,7 +595,7 @@ public  final class TryAcquireLockRequest extends
      * Time-to-live for the lock in seconds
      * </pre>
      *
-     * <code>int64 ttl = 4 [json_name = "ttl"];</code>
+     * <code>int32 ttl = 4 [json_name = "ttl"];</code>
      * @return This builder for chaining.
      */
     public Builder clearTtl() {
@@ -627,7 +627,7 @@ public  final class TryAcquireLockRequest extends
           };
           java.lang.String info =
               "\u0000\u0004\u0000\u0000\u0001\u0004\u0004\u0000\u0000\u0000\u0001\u0208\u0002\u0208" +
-              "\u0003\u0208\u0004\u0002";
+              "\u0003\u0208\u0004\u0004";
           return newMessageInfo(DEFAULT_INSTANCE, info, objects);
       }
       // fall through

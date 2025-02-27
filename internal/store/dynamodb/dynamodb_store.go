@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/avivl/quorum-quest/internal/observability"
+	"github.com/avivl/quorum-quest/internal/store"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
@@ -22,6 +23,11 @@ type Store struct {
 	ttl       int32
 	logger    *observability.SLogger
 	config    *DynamoDBConfig
+}
+
+// Add this method to the Store struct to implement the store.Store interface
+func (s *Store) GetConfig() store.StoreConfig {
+	return s.config
 }
 
 // New creates a new DynamoDB store
@@ -145,9 +151,10 @@ func (s *Store) TryAcquireLock(ctx context.Context, service, domain, clientId st
 	pk := fmt.Sprintf("%s:%s", service, domain)
 
 	// Set TTL
-	expiryTime := time.Now().Add(time.Duration(ttl) * time.Second).Unix()
+	now := time.Now()
+	expiryTime := now.Add(time.Duration(ttl) * time.Second).Unix()
 
-	// Try to insert the item with a condition that it doesn't exist
+	// Try to insert the item with a condition that it doesn't exist or has expired
 	_, err := s.client.PutItem(ctx, &dynamodb.PutItemInput{
 		TableName: aws.String(s.tableName),
 		Item: map[string]types.AttributeValue{
@@ -155,15 +162,13 @@ func (s *Store) TryAcquireLock(ctx context.Context, service, domain, clientId st
 			"ClientID":  &types.AttributeValueMemberS{Value: clientId},
 			"ExpiresAt": &types.AttributeValueMemberN{Value: fmt.Sprintf("%d", expiryTime)},
 		},
-		ConditionExpression: aws.String("attribute_not_exists(PK)"),
+		ConditionExpression: aws.String("attribute_not_exists(PK) OR ExpiresAt < :now"),
+		ExpressionAttributeValues: map[string]types.AttributeValue{
+			":now": &types.AttributeValueMemberN{Value: fmt.Sprintf("%d", now.Unix())},
+		},
 	})
 
-	if err != nil {
-		s.logger.Debugf("Failed to acquire lock: %v", err)
-		return false
-	}
-
-	return true
+	return err == nil
 }
 
 // ReleaseLock releases a lock

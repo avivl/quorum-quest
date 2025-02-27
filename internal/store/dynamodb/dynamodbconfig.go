@@ -15,6 +15,10 @@ type DynamoDBConfig struct {
 	SecretAccessKey string   `yaml:"secretAccessKey,omitempty"`
 }
 
+// Make sure DynamoDBConfig implements store.StoreConfig
+// Add any missing methods required by the interface
+
+// Assuming store.StoreConfig requires these methods:
 func (c *DynamoDBConfig) GetTableName() string {
 	return c.Table
 }
@@ -26,6 +30,8 @@ func (c *DynamoDBConfig) GetTTL() int32 {
 func (c *DynamoDBConfig) GetEndpoints() []string {
 	return c.Endpoints
 }
+
+// Validate is already implemented
 
 func (c *DynamoDBConfig) Validate() error {
 	if c.Region == "" {

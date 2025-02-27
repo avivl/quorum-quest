@@ -295,3 +295,42 @@ func TestDefaultValues(t *testing.T) {
 	// Verify Server defaults
 	assert.Equal(t, "localhost:5050", cfg.ServerAddress, "Should use default server address")
 }
+
+func TestNotifyWatchers(t *testing.T) {
+	loader := NewConfigLoader(".")
+
+	var called bool
+	var receivedConfig interface{}
+
+	// Add a watcher
+	loader.AddWatcher(func(config interface{}) {
+		called = true
+		receivedConfig = config
+	})
+
+	// Create test config
+	testConfig := "test-config"
+
+	// Notify watchers
+	loader.notifyWatchers(testConfig)
+
+	// Verify watcher was called
+	assert.True(t, called, "Watcher should have been called")
+	assert.Equal(t, testConfig, receivedConfig, "Watcher should receive correct config")
+}
+
+func TestGetCurrentConfig(t *testing.T) {
+	loader := NewConfigLoader(".")
+	testConfig := "test-config"
+
+	// Set current config
+	loader.mu.Lock()
+	loader.currentConfig = testConfig
+	loader.mu.Unlock()
+
+	// Get current config
+	config := loader.GetCurrentConfig()
+
+	// Verify
+	assert.Equal(t, testConfig, config, "GetCurrentConfig should return correct config")
+}

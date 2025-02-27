@@ -1,3 +1,4 @@
+// internal/store/scylladb/store.go
 package scylladb
 
 // TODO Go over all ttl values and conversion
@@ -131,18 +132,24 @@ func (sdb *Store) validateKeyspace() {
 }
 
 func (sdb *Store) validateTable() {
-
-	err := sdb.session.Query(fmt.Sprintf(`CREATE Table IF NOT EXISTS %s.%s
-	(service text,
-domain  text,
-client_id text,
-PRIMARY KEY (service,domain))
-WITH default_time_to_live = 15;
-`, sdb.keyspaceName, sdb.tableName)).Exec()
+	// Create the main table with a compound primary key
+	err := sdb.session.Query(fmt.Sprintf(`CREATE TABLE IF NOT EXISTS %s.%s (
+        service text,
+        domain text,
+        client_id text,
+        PRIMARY KEY ((service, domain))
+    ) WITH default_time_to_live = 15`, sdb.keyspaceName, sdb.tableName)).Exec()
 	if err != nil {
 		sdb.l.Fatal(err)
 	}
 
+	// Create an index on client_id to support our queries
+	err = sdb.session.Query(fmt.Sprintf(
+		"CREATE INDEX IF NOT EXISTS ON %s.%s (client_id)",
+		sdb.keyspaceName, sdb.tableName)).Exec()
+	if err != nil {
+		sdb.l.Fatal(err)
+	}
 }
 
 func (sdb *Store) TryAcquireLock(ctx context.Context, service, domain, client_id string, ttl int32) bool {

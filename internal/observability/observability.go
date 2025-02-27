@@ -1,3 +1,4 @@
+// internal/observability/observability.go
 package observability
 
 import (

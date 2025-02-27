@@ -1,3 +1,4 @@
+// internal/observability/observabilityconfig.go
 package observability
 
 import "go.uber.org/zap/zapcore"

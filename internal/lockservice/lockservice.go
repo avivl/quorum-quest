@@ -1,3 +1,4 @@
+// internal/lockservice/lockservice.go
 package lockservice
 
 import (

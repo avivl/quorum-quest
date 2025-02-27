@@ -1,3 +1,4 @@
+// internal/store/dynamodb/dynamodbconfig.go
 package dynamodb
 
 import (

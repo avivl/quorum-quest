@@ -10,10 +10,9 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/avivl/quorum-quest/internal/lockservice"
 	"github.com/avivl/quorum-quest/internal/observability"
 	"github.com/avivl/quorum-quest/internal/store"
-
-	"github.com/avivl/quorum-quest/internal/lockservice"
 	"github.com/gocql/gocql"
 )
 
@@ -36,7 +35,7 @@ func init() {
 // It returns a store.Store interface and an error if any.
 // If more than one endpoint is provided, it returns ErrMultipleEndpointsUnsupported.
 // If the configuration options are missing or invalid, it returns ErrConfigOptionMissing.
-func newStore(ctx context.Context, options lockservice.Config, logger *observability.SLogger) (store.Store, error) {
+func newStore(ctx context.Context, options lockservice.Config, logger *observability.SLogger) (store.LockStore, error) {
 	cfg, ok := options.(*ScyllaDBConfig)
 	if !ok && options != nil {
 		return nil, &store.InvalidConfigurationError{Store: StoreName, Config: options}
@@ -115,10 +114,11 @@ func (sdb *Store) initSession() {
 	sdb.validateKeyspace()
 	sdb.validateTable()
 	sdb.TryAcquireLockQuery = fmt.Sprintf("INSERT INTO %s (service, domain, client_id) VALUES (?, ?, ?) IF NOT EXISTS USING TTL ?", sdb.fullTableName)
-	sdb.ValidateLockQuery = fmt.Sprintf("SELECT client_id FROM %s WHERE service =? and  domain = ? and client_id =? ALLOW FILTERING", sdb.fullTableName)
-	sdb.ReleaseLockQuery = fmt.Sprintf("DELETE FROM %s WHERE service =? and  domain =? and client_id =? USING TTL ?", sdb.fullTableName)
-
+	sdb.ValidateLockQuery = fmt.Sprintf("SELECT client_id FROM %s WHERE service =? and domain = ? and client_id =? ALLOW FILTERING", sdb.fullTableName)
+	// Fix: Remove client_id from WHERE clause and remove USING TTL
+	sdb.ReleaseLockQuery = fmt.Sprintf("DELETE FROM %s WHERE service =? and domain =?", sdb.fullTableName)
 }
+
 func (sdb *Store) validateKeyspace() {
 	err := sdb.session.Query(fmt.Sprintf(`CREATE KEYSPACE IF NOT EXISTS %s
 	WITH replication = {
@@ -180,12 +180,22 @@ func (sdb *Store) TryAcquireLock(ctx context.Context, service, domain, clientId 
 	return true
 }
 
-func (sdb *Store) ReleaseLock(ctx context.Context, service, domain, client_id string) {
-	err := sdb.session.Query(sdb.ReleaseLockQuery,
-		service, domain, client_id).WithContext(ctx).Exec()
-	if err != nil {
-		sdb.l.Errorf("Error ReleaseLock %v", err)
+func (sdb *Store) ReleaseLock(ctx context.Context, service, domain, clientId string) {
+	// First validate that this client owns the lock
+	var storedClientId string
+	err := sdb.session.Query(sdb.ValidateLockQuery, service, domain, clientId).WithContext(ctx).Scan(&storedClientId)
+
+	if err == nil && storedClientId == clientId {
+		// This client owns the lock, so it can release it
+		err = sdb.session.Query(sdb.ReleaseLockQuery, service, domain).WithContext(ctx).Exec()
+		if err != nil {
+			sdb.l.Errorf("Error ReleaseLock %v", err)
+		}
+	} else if err != nil && err != gocql.ErrNotFound {
+		// Log errors other than "not found"
+		sdb.l.Errorf("Error validating lock ownership before release: %v", err)
 	}
+	// If the lock doesn't exist or isn't owned by this client, do nothing
 }
 
 func (sdb *Store) KeepAlive(ctx context.Context, service, domain, client_id string, ttl int32) time.Duration {

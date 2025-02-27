@@ -1,3 +1,4 @@
+// internal/lockservice/mock_test.go
 package lockservice
 
 import (

@@ -1,3 +1,4 @@
+// internal/store/scylladb/scylladbconfig.go
 package scylladb
 
 import (

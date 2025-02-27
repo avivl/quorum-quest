@@ -1,3 +1,4 @@
+// internal/store/storeconfig.go
 package store
 
 // StoreConfig defines the interface for store configurations

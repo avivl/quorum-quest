@@ -1,3 +1,4 @@
+// internal/store/errors.go
 package store
 
 import (

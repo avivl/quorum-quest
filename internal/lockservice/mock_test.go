@@ -3,7 +3,6 @@ package lockservice
 
 import (
 	"context"
-	"time"
 
 	"github.com/avivl/quorum-quest/internal/observability"
 	"github.com/avivl/quorum-quest/internal/store"
@@ -115,62 +114,4 @@ func (m Mock) TryAcquireLock(_ context.Context, service, domain, clientId string
 //
 // The function takes a context, service, domain, and clientId as parameters.
 // The context parameter is used to control the lifetime of the operation.
-// The service parameter is a string representing the name of the service for which the lock is being released.
-// The domain parameter is a string representing the domain within the service for which the lock is being released.
-// The clientId parameter is a string representing the unique identifier of the client attempting to release the lock.
-//
-// The function does not return any value.
-//
-// If the context is canceled or expired before the lock is released, the function will panic.
-//
-// The Mock implementation of this function panics with the message "implement me".
-// In a real implementation, this function should attempt to release the lock using the underlying store.
-func (m Mock) ReleaseLock(_ context.Context, service, domain, clientId string) {
-	panic("implement me")
-}
-
-// KeepAlive attempts to keep the lock for the given service, domain, and clientId alive.
-//
-// The function takes a context, service, domain, and clientId as parameters.
-// The context parameter is used to control the lifetime of the operation.
-// The service parameter is a string representing the name of the service for which the lock is being kept alive.
-// The domain parameter is a string representing the domain within the service for which the lock is being kept alive.
-// The clientId parameter is a string representing the unique identifier of the client attempting to keep the lock alive.
-//
-// The function returns a time.Duration indicating the duration for which the lock will be kept alive.
-// If the lock is successfully kept alive, the function returns a positive time.Duration value.
-// If the lock cannot be kept alive, the function returns a zero time.Duration value.
-//
-// If the context is canceled or expired before the lock is kept alive, the function will panic.
-//
-// The Mock implementation of this function panics with the message "implement me".
-// In a real implementation, this function should attempt to keep the lock alive using the underlying store.
-func (m Mock) KeepAlive(_ context.Context, service, domain, clientId string, ttl int32) time.Duration {
-	panic("implement me")
-}
-
-// Close closes the Mock store and releases any resources held by it.
-//
-// The function does not return any value.
-//
-// If there are any errors during the closing process, the function will panic with the error message.
-//
-// This function should be called when the Mock store is no longer needed to free up resources.
-//
-// Example:
-//
-//	store, err := New(ctx, []string{"localhost:6379"}, cfg)
-//	if err!= nil {
-//		// Handle error
-//	}
-//	// Use the store
-//	//...
-//	store.Close()
-func (m Mock) Close() {
-	panic("implement me")
-}
-
-// GetConfig returns the current store configuration
-func (m Mock) GetConfig() store.StoreConfig {
-	return *m.cfg
-}
+// The service parameter is a string representing th

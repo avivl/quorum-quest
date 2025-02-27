@@ -37,6 +37,15 @@ func NewServer[T store.StoreConfig](
 	if config == nil {
 		return nil, errors.New("config is nil")
 	}
+	if logger == nil {
+		return nil, errors.New("logger is nil")
+	}
+	if metrics == nil {
+		return nil, errors.New("metrics is nil")
+	}
+	if storeInitializer == nil {
+		return nil, errors.New("store initializer is nil")
+	}
 
 	return &Server[T]{
 		logger:  logger,

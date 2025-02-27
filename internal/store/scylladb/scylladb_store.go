@@ -78,11 +78,13 @@ func parseConsistency(c string) gocql.Consistency {
 
 // New creates a new ScyllaDB client.
 func New(ctx context.Context, config *ScyllaDBConfig, logger *observability.SLogger) (*Store, error) {
-	if len(config.Endpoints) > 1 {
-		return nil, ErrMultipleEndpointsUnsupported
-	}
+	// Check for nil config first, before any access to config fields
 	if config == nil {
 		return nil, ErrConfigOptionMissing
+	}
+
+	if len(config.Endpoints) > 1 {
+		return nil, ErrMultipleEndpointsUnsupported
 	}
 
 	cluster := gocql.NewCluster(config.Host + ":" + strconv.Itoa(int(config.Port)))
@@ -99,7 +101,7 @@ func New(ctx context.Context, config *ScyllaDBConfig, logger *observability.SLog
 		session:       session,
 		tableName:     config.Table,
 		keyspaceName:  config.Keyspace,
-		fullTableName: fmt.Sprintf(`"%s"."%s"`, config.Keyspace, config.Table), // Use double quotes here too
+		fullTableName: fmt.Sprintf(`"%s"."%s"`, config.Keyspace, config.Table),
 		ttl:           int32(math.Round((time.Duration(config.TTL).Seconds() * 1000000000))),
 		l:             logger,
 		config:        config,

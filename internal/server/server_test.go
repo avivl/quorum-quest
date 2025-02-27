@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"testing"
 	"time"
 
@@ -17,6 +18,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
+	"google.golang.org/grpc"
 )
 
 type TestConfig struct {
@@ -346,4 +348,156 @@ func TestReleaseLock(t *testing.T) {
 			assert.True(t, verifyResult, "verification failed after lock release")
 		})
 	}
+}
+
+func TestUnaryServerInterceptor(t *testing.T) {
+	// Create a minimal server instance
+	logger, _, _ := observability.NewTestLogger()
+	metrics, _ := observability.NewMetricsClient(observability.Config{ServiceName: "test"}, logger)
+
+	server := &Server[*scylladb.ScyllaDBConfig]{
+		logger:  logger,
+		metrics: metrics,
+	}
+
+	// Create the interceptor
+	interceptor := server.unaryServerInterceptor()
+
+	// Mock handler function
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return "response", nil
+	}
+
+	// Create server info
+	info := &grpc.UnaryServerInfo{
+		FullMethod: "/test.Service/TestMethod",
+	}
+
+	// Call interceptor
+	resp, err := interceptor(context.Background(), "request", info, handler)
+
+	// Validate
+	assert.NoError(t, err)
+	assert.Equal(t, "response", resp)
+}
+
+func TestServe(t *testing.T) {
+	// Create a minimal server instance
+	logger, _, _ := observability.NewTestLogger()
+	metrics, _ := observability.NewMetricsClient(observability.Config{ServiceName: "test"}, logger)
+
+	server := &Server[*scylladb.ScyllaDBConfig]{
+		logger:  logger,
+		metrics: metrics,
+	}
+
+	// Test without listener
+	err := server.serve(context.Background())
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "listener is required")
+
+	// Create a test listener
+	listener, err := net.Listen("tcp", "localhost:0")
+	require.NoError(t, err)
+
+	server.listener = listener
+
+	// Start server in goroutine
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	errCh := make(chan error)
+	go func() {
+		errCh <- server.serve(ctx)
+	}()
+
+	// Give it time to start
+	time.Sleep(100 * time.Millisecond)
+
+	// Stop the server
+	server.Stop()
+
+	// Check no error from serve
+	select {
+	case err := <-errCh:
+		assert.NoError(t, err)
+	case <-time.After(time.Second):
+		t.Fatal("server.serve didn't return in time")
+	}
+}
+
+func TestKeepAlive(t *testing.T) {
+	// Setup mock store that implements the store interface
+	mockStore := &MockStore{
+		keepAliveFunc: func(ctx context.Context, service, domain, clientId string, ttl int32) time.Duration {
+			return 10 * time.Second
+		},
+	}
+
+	// Create server with mock store
+	logger, _, _ := observability.NewTestLogger()
+	metrics, _ := observability.NewMetricsClient(observability.Config{ServiceName: "test"}, logger)
+
+	server := &Server[*scylladb.ScyllaDBConfig]{
+		logger:  logger,
+		metrics: metrics,
+		store:   mockStore,
+	}
+
+	// Test KeepAlive
+	req := &pb.KeepAliveRequest{
+		Service:  "test-service",
+		Domain:   "test-domain",
+		ClientId: "client-123",
+		Ttl:      30,
+	}
+
+	resp, err := server.KeepAlive(context.Background(), req)
+
+	// Validate
+	assert.NoError(t, err)
+	assert.NotNil(t, resp)
+	assert.Equal(t, int64(10), resp.LeaseLength.Seconds)
+}
+
+// MockStore for testing
+type MockStore struct {
+	tryAcquireLockFunc func(ctx context.Context, service, domain, clientId string, ttl int32) bool
+	releaseLockFunc    func(ctx context.Context, service, domain, clientId string)
+	keepAliveFunc      func(ctx context.Context, service, domain, clientId string, ttl int32) time.Duration
+	closeFunc          func()
+	getConfigFunc      func() store.StoreConfig
+}
+
+func (m *MockStore) TryAcquireLock(ctx context.Context, service, domain, clientId string, ttl int32) bool {
+	if m.tryAcquireLockFunc != nil {
+		return m.tryAcquireLockFunc(ctx, service, domain, clientId, ttl)
+	}
+	return false
+}
+
+func (m *MockStore) ReleaseLock(ctx context.Context, service, domain, clientId string) {
+	if m.releaseLockFunc != nil {
+		m.releaseLockFunc(ctx, service, domain, clientId)
+	}
+}
+
+func (m *MockStore) KeepAlive(ctx context.Context, service, domain, clientId string, ttl int32) time.Duration {
+	if m.keepAliveFunc != nil {
+		return m.keepAliveFunc(ctx, service, domain, clientId, ttl)
+	}
+	return 0
+}
+
+func (m *MockStore) Close() {
+	if m.closeFunc != nil {
+		m.closeFunc()
+	}
+}
+
+func (m *MockStore) GetConfig() store.StoreConfig {
+	if m.getConfigFunc != nil {
+		return m.getConfigFunc()
+	}
+	return nil
 }

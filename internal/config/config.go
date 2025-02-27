@@ -130,6 +130,8 @@ func loadConfiguration[T store.StoreConfig](v *viper.Viper, loadFn ConfigLoadFn[
 }
 
 // ScyllaConfigLoader loads ScyllaDB configuration
+// internal/config/config.go
+// Remove debug print statements
 func ScyllaConfigLoader(v *viper.Viper) (*scylladb.ScyllaDBConfig, error) {
 	// Set ScyllaDB specific defaults first
 	setScyllaDefaults(v)
@@ -144,13 +146,6 @@ func ScyllaConfigLoader(v *viper.Viper) (*scylladb.ScyllaDBConfig, error) {
 		Consistency: getEnvOrValue(v, "QUORUMQUEST_SCYLLADBCONFIG_CONSISTENCY", v.GetString("scyllaDbConfig.consistency")),
 		Endpoints:   getEnvSliceOrValue(v, "QUORUMQUEST_SCYLLADBCONFIG_ENDPOINTS", v.GetStringSlice("scyllaDbConfig.endpoints")),
 	}
-
-	// Debug output
-	fmt.Printf("Loading ScyllaDB config from defaults/env:\n")
-	fmt.Printf("Host: %s (env: %s)\n", config.Host, os.Getenv("QUORUMQUEST_SCYLLADBCONFIG_HOST"))
-	fmt.Printf("Port: %d (env: %s)\n", config.Port, os.Getenv("QUORUMQUEST_SCYLLADBCONFIG_PORT"))
-	fmt.Printf("Keyspace: %s (env: %s)\n", config.Keyspace, os.Getenv("QUORUMQUEST_SCYLLADBCONFIG_KEYSPACE"))
-	fmt.Printf("Table: %s\n", config.Table)
 
 	if err := config.Validate(); err != nil {
 		return nil, fmt.Errorf("invalid ScyllaDB configuration: %w", err)

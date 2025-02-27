@@ -1,4 +1,4 @@
-// internal/store/scylladb/store.go
+// internal/store/scylladb/scylladb_store.go
 package scylladb
 
 // TODO Go over all ttl values and conversion
@@ -131,16 +131,17 @@ func (sdb *Store) validateKeyspace() {
 
 }
 
-func (sdb *Store) validateTable() {
+func (sdb *Store) validateTable() error {
 	// Create the main table with a compound primary key
+	defaultTTL := 15 // Store this as a const at package level
 	err := sdb.session.Query(fmt.Sprintf(`CREATE TABLE IF NOT EXISTS %s.%s (
         service text,
         domain text,
         client_id text,
         PRIMARY KEY ((service, domain))
-    ) WITH default_time_to_live = 15`, sdb.keyspaceName, sdb.tableName)).Exec()
+    ) WITH default_time_to_live = %d`, sdb.keyspaceName, sdb.tableName, defaultTTL)).Exec()
 	if err != nil {
-		sdb.l.Fatal(err)
+		return fmt.Errorf("failed to create table: %w", err)
 	}
 
 	// Create an index on client_id to support our queries
@@ -148,30 +149,37 @@ func (sdb *Store) validateTable() {
 		"CREATE INDEX IF NOT EXISTS ON %s.%s (client_id)",
 		sdb.keyspaceName, sdb.tableName)).Exec()
 	if err != nil {
-		sdb.l.Fatal(err)
+		return fmt.Errorf("failed to create index: %w", err)
 	}
+
+	return nil
 }
 
-func (sdb *Store) TryAcquireLock(ctx context.Context, service, domain, client_id string, ttl int32) bool {
+func (sdb *Store) TryAcquireLock(ctx context.Context, service, domain, clientId string, ttl int32) bool {
 	_ttl := ttl
 	if ttl == 0 {
 		_ttl = sdb.ttl
 	}
-	err := sdb.session.Query(sdb.TryAcquireLockQuery,
-		service, domain, client_id, _ttl).WithContext(ctx).Exec()
-	if err != nil {
-		sdb.l.Errorf("Error from TryAcquireLock insert %v", err)
-		return false
 
-	}
-	var value string
-	err = sdb.session.Query(sdb.ValidateLockQuery, service, domain, client_id).WithContext(ctx).Scan(&value)
+	// First attempt the insertion
+	err := sdb.session.Query(sdb.TryAcquireLockQuery,
+		service, domain, clientId, _ttl).WithContext(ctx).Exec()
 	if err != nil {
-		sdb.l.Errorf("Error from TryAcquireLock select %v", err)
+		sdb.l.Errorf("Error acquiring lock: %v", err)
 		return false
 	}
+
+	// Verify the lock was acquired by reading it back
+	var value string
+	err = sdb.session.Query(sdb.ValidateLockQuery, service, domain, clientId).WithContext(ctx).Scan(&value)
+	if err != nil {
+		sdb.l.Errorf("Error validating lock: %v", err)
+		return false
+	}
+
 	return true
 }
+
 func (sdb *Store) ReleaseLock(ctx context.Context, service, domain, client_id string) {
 	err := sdb.session.Query(sdb.ReleaseLockQuery,
 		service, domain, client_id).WithContext(ctx).Exec()

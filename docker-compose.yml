@@ -1,5 +1,3 @@
-version: '3'
-
 services:
   scylla:
     container_name: scylla

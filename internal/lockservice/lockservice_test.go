@@ -73,5 +73,11 @@ func TestNewStore(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.NotNil(t, s)
-	assert.IsType(t, &Mock{}, s)
+	// Updated to check for mockLockStoreWrapper instead of mockStoreWrapper
+	assert.IsType(t, &mockLockStoreWrapper{}, s)
+
+	// Verify it's wrapping a *Mock
+	wrapper, ok := s.(*mockLockStoreWrapper)
+	assert.True(t, ok)
+	assert.IsType(t, &Mock{}, wrapper.Mock)
 }

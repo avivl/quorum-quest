@@ -19,7 +19,8 @@ var (
 type Config any
 
 // Constructor The signature of a store constructor.
-type Constructor func(ctx context.Context, options Config, logger *observability.SLogger) (store.Store, error)
+// Updated to return LockStore instead of Store
+type Constructor func(ctx context.Context, options Config, logger *observability.SLogger) (store.LockStore, error)
 
 // Register registers a new store constructor.
 // It panics if the constructor is nil or if it's called twice for the same name.
@@ -69,9 +70,9 @@ func Constructors() []string {
 	return list
 }
 
-// NewStore creates a new store instance using the specified constructor.
-// It returns an error if the store name is unknown or the constructor is nil.
-func NewStore(ctx context.Context, storeName string, options Config, logger *observability.SLogger) (store.Store, error) {
+// NewStore creates a new lock store instance using the specified constructor.
+// Updated to return LockStore instead of Store
+func NewStore(ctx context.Context, storeName string, options Config, logger *observability.SLogger) (store.LockStore, error) {
 	constructorsMu.RLock()
 	construct, ok := constructors[storeName]
 	constructorsMu.RUnlock()

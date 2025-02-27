@@ -1,3 +1,5 @@
+version: '3'
+
 services:
   scylla:
     container_name: scylla
@@ -11,6 +13,9 @@ services:
       interval: 10s
       timeout: 5s
       retries: 18
+    networks:
+      - tasks-network
+
   scylla-2:
     container_name: scylla-2
     image: scylladb/scylla:latest
@@ -21,6 +26,9 @@ services:
       interval: 5s
       timeout: 10s
       retries: 18
+    networks:
+      - tasks-network
+
   scylla-3:
     container_name: scylla-3
     image: scylladb/scylla:latest
@@ -31,10 +39,31 @@ services:
       interval: 5s
       timeout: 10s
       retries: 18
+    networks:
+      - tasks-network
+
   otel-collector:
     container_name: otel-collector
     image: otel/opentelemetry-collector-contrib:latest
     restart: always
     ports:
       - 4317:4317
-  
+    networks:
+      - tasks-network
+
+  dynamodb-local:
+    image: "amazon/dynamodb-local:latest"
+    container_name: dynamodb-local
+    working_dir: /home/dynamodblocal
+    command: "-jar DynamoDBLocal.jar -sharedDb -dbPath ./data"
+    ports:
+      - "8000:8000"
+    volumes:
+      - "./data/dynamodb:/home/dynamodblocal/data"
+    networks:
+      - tasks-network
+    restart: always
+
+networks:
+  tasks-network:
+    driver: bridge

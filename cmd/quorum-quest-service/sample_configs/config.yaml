@@ -1,12 +1,13 @@
 serverAddress: "localhost:5050"
 store:
-  region: "us-west-2"
-  table: "quorum-quest"
-  ttl: 15
+  host: "127.0.0.1"
+  port: 9042
+  keyspace: "quorumquest"
+  table: "services"
+  ttl: 3
+  consistency: "CONSISTENCY_QUORUM"
   endpoints:
-    - "http://localhost:8000"  # For local DynamoDB
-  accessKeyId: "your-access-key"  # Optional
-  secretAccessKey: "your-secret-key"  # Optional
+    - "localhost:9042"
 logger:
   level: "LOG_LEVELS_INFOLEVEL"
 observability:
@@ -15,4 +16,4 @@ observability:
   environment: "development"
   otelEndpoint: "localhost:4317"
 backend:
-  type: "dynamodb"
+  type: "scylladb"

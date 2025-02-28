@@ -14,6 +14,7 @@ import (
 	"github.com/avivl/quorum-quest/internal/store"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/keepalive"
+	"google.golang.org/grpc/reflection"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/durationpb"
 )
@@ -71,7 +72,6 @@ func (s *Server[T]) Start(ctx context.Context, storeInitializer func(context.Con
 		s.logger.ErrorCtx(ctx, err)
 		return err
 	}
-
 	if err := s.initStore(ctx, storeInitializer); err != nil {
 		s.logger.ErrorCtx(ctx, err)
 		return err
@@ -97,7 +97,7 @@ func (s *Server[T]) serve(ctx context.Context) error {
 	opts := []grpc.ServerOption{grpc.KeepaliveParams(keepaliveParams), ui}
 	s.server = grpc.NewServer(opts...)
 	pb.RegisterLeaderElectionServiceServer(s.server, s)
-
+	reflection.Register(s.server)
 	s.logger.InfoCtx(ctx, "server listening at "+s.listener.Addr().String())
 
 	if err := s.server.Serve(s.listener); err != nil && err.Error() != "closed" {

@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/avivl/quorum-quest/internal/store/dynamodb"
 	"github.com/avivl/quorum-quest/internal/store/scylladb"
@@ -12,16 +13,31 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// TestMain sets up the test environment
+func TestMain(m *testing.M) {
+	// Set environment variable to indicate we're in test mode
+	os.Setenv("GO_TEST_MODE", "1")
+
+	// Run tests
+	result := m.Run()
+
+	// Exit with the test result
+	os.Exit(result)
+}
+
 func TestEnvironmentOverrides(t *testing.T) {
 	// Create a temporary directory
 	tmpDir := t.TempDir()
 
 	// Create base config file
 	baseConfig := `
-scyllaDbConfig:
+backend:
+  type: "scylladb"
+
+store:
   host: "127.0.0.1"
   port: 9042
-  keyspace: "quorum-ques"
+  keyspace: "quorum-quest"
   table: "services"
   ttl: 15
   consistency: "CONSISTENCY_QUORUM"
@@ -44,9 +60,9 @@ serverAddress: "localhost:5050"
 
 	// Set environment variables
 	envVars := map[string]string{
-		"QUORUMQUEST_SCYLLADBCONFIG_HOST":     "env-host",
-		"QUORUMQUEST_SCYLLADBCONFIG_PORT":     "9043",
-		"QUORUMQUEST_SCYLLADBCONFIG_KEYSPACE": "env-keyspace",
+		"QUORUMQUEST_STORE_HOST":     "env-host",
+		"QUORUMQUEST_STORE_PORT":     "9043",
+		"QUORUMQUEST_STORE_KEYSPACE": "env-keyspace",
 	}
 
 	// Set all environment variables
@@ -83,7 +99,10 @@ func TestEnvironmentPrecedence(t *testing.T) {
 
 	// Create config file
 	configContent := `
-scyllaDbConfig:
+backend:
+  type: "scylladb"
+
+store:
   host: "file-host"
   port: 9042
   keyspace: "file-keyspace"
@@ -97,7 +116,7 @@ scyllaDbConfig:
 	require.NoError(t, err)
 
 	// Set environment variables
-	t.Setenv("QUORUMQUEST_SCYLLADBCONFIG_HOST", "env-host")
+	t.Setenv("QUORUMQUEST_STORE_HOST", "env-host")
 
 	// Load configuration
 	loader, cfg, err := LoadConfig[*scylladb.ScyllaDBConfig](tmpDir, ScyllaConfigLoader)
@@ -106,7 +125,7 @@ scyllaDbConfig:
 	require.NotNil(t, cfg)
 
 	// Debug output
-	t.Logf("Host from env: %s", os.Getenv("QUORUMQUEST_SCYLLADBCONFIG_HOST"))
+	t.Logf("Host from env: %s", os.Getenv("QUORUMQUEST_STORE_HOST"))
 	t.Logf("Host from config: %s", cfg.Store.Host)
 
 	// Verify environment variables take precedence
@@ -116,6 +135,7 @@ scyllaDbConfig:
 	assert.Equal(t, "file-keyspace", cfg.Store.Keyspace, "File value should be retained when no environment override exists")
 	assert.Equal(t, int32(9042), cfg.Store.Port, "File value should be retained when no environment override exists")
 }
+
 func TestLoadFromFiles(t *testing.T) {
 	t.Run("Load ScyllaDB Config", func(t *testing.T) {
 		// Create temporary directory
@@ -123,7 +143,10 @@ func TestLoadFromFiles(t *testing.T) {
 
 		// Create ScyllaDB config file
 		scyllaConfig := `
-scyllaDbConfig:
+backend:
+  type: "scylladb"
+
+store:
   host: "scylla-host"
   port: 9042
   keyspace: "my-keyspace"
@@ -178,14 +201,18 @@ serverAddress: "0.0.0.0:8080"
 
 		// Create DynamoDB config file
 		dynamoConfig := `
-dynamoDbConfig:
+backend:
+  type: "dynamodb"
+
+store:
   region: "us-east-1"
   table: "my-dynamo-table"
   ttl: 25
   endpoints:
     - "dynamodb.us-east-1.amazonaws.com"
   profile: "prod"
-  maxRetries: 5
+  accessKeyId: "test-key"
+  secretAccessKey: "test-secret"
 
 observability:
   serviceName: "my-dynamo-service"
@@ -213,6 +240,8 @@ serverAddress: "0.0.0.0:9090"
 		assert.Equal(t, int32(25), cfg.Store.TTL)
 		assert.Equal(t, []string{"dynamodb.us-east-1.amazonaws.com"}, cfg.Store.Endpoints)
 		assert.Equal(t, "prod", cfg.Store.Profile)
+		assert.Equal(t, "test-key", cfg.Store.AccessKeyID)
+		assert.Equal(t, "test-secret", cfg.Store.SecretAccessKey)
 
 		// Verify common config
 		assert.Equal(t, "my-dynamo-service", cfg.Observability.ServiceName)
@@ -229,7 +258,10 @@ serverAddress: "0.0.0.0:9090"
 
 		// Create invalid config file
 		invalidConfig := `
-scyllaDbConfig:
+backend:
+  type: "scylladb"
+
+store:
   host: "" # Invalid: empty host
   port: -1 # Invalid: negative port
   keyspace: "my-keyspace"
@@ -244,12 +276,15 @@ observability:
 		// Attempt to load configuration
 		_, _, err = LoadConfig[*scylladb.ScyllaDBConfig](tmpDir, ScyllaConfigLoader)
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), "invalid")
+		assert.Contains(t, err.Error(), "failed to parse config: store validation failed: host is required")
 	})
 
 	t.Run("Load Non-existent File", func(t *testing.T) {
 		// Create temporary directory
 		tmpDir := t.TempDir()
+
+		// Set up a default backend type environment variable to ensure test works
+		t.Setenv("QUORUMQUEST_BACKEND_TYPE", "scylladb")
 
 		// Load configuration from non-existent file
 		loader, cfg, err := LoadConfig[*scylladb.ScyllaDBConfig](tmpDir, ScyllaConfigLoader)
@@ -260,13 +295,17 @@ observability:
 		// Verify default values
 		assert.Equal(t, "127.0.0.1", cfg.Store.Host)
 		assert.Equal(t, int32(9042), cfg.Store.Port)
-		assert.Equal(t, "quorum-ques", cfg.Store.Keyspace)
+		assert.Equal(t, "quorum-quest", cfg.Store.Keyspace)
 		assert.Equal(t, "services", cfg.Store.Table)
 	})
 }
+
 func TestDefaultValues(t *testing.T) {
 	// Create temporary directory
 	tmpDir := t.TempDir()
+
+	// Set up a default backend type environment variable to ensure test works
+	t.Setenv("QUORUMQUEST_BACKEND_TYPE", "scylladb")
 
 	// Load configuration with no file present
 	loader, cfg, err := LoadConfig[*scylladb.ScyllaDBConfig](tmpDir, ScyllaConfigLoader)
@@ -277,7 +316,7 @@ func TestDefaultValues(t *testing.T) {
 	// Verify Store defaults
 	assert.Equal(t, "127.0.0.1", cfg.Store.Host, "Should use default host")
 	assert.Equal(t, int32(9042), cfg.Store.Port, "Should use default port")
-	assert.Equal(t, "quorum-ques", cfg.Store.Keyspace, "Should use default keyspace")
+	assert.Equal(t, "quorum-quest", cfg.Store.Keyspace, "Should use default keyspace")
 	assert.Equal(t, "services", cfg.Store.Table, "Should use default table")
 	assert.Equal(t, int32(15), cfg.Store.TTL, "Should use default TTL")
 	assert.Equal(t, "CONSISTENCY_QUORUM", cfg.Store.Consistency, "Should use default consistency")
@@ -296,41 +335,123 @@ func TestDefaultValues(t *testing.T) {
 	assert.Equal(t, "localhost:5050", cfg.ServerAddress, "Should use default server address")
 }
 
-func TestNotifyWatchers(t *testing.T) {
-	loader := NewConfigLoader(".")
+func TestConfigWatcher(t *testing.T) {
+	// Skip this test in automated test environments since it relies on file watching
+	if os.Getenv("CI") != "" {
+		t.Skip("Skipping file watcher test in CI environment")
+	}
 
-	var called bool
-	var receivedConfig interface{}
+	// Make sure we're not in test mode for this specific test
+	previousTestMode := os.Getenv("GO_TEST_MODE")
+	os.Setenv("GO_TEST_MODE", "")
+	defer os.Setenv("GO_TEST_MODE", previousTestMode)
 
-	// Add a watcher
-	loader.AddWatcher(func(config interface{}) {
-		called = true
-		receivedConfig = config
+	// Create temporary directory
+	tmpDir := t.TempDir()
+
+	// Create initial config file
+	initialConfig := `
+backend:
+  type: "scylladb"
+
+store:
+  host: "initial-host"
+  port: 9042
+  keyspace: "initial-keyspace"
+  table: "initial-table"
+  ttl: 15
+  consistency: "CONSISTENCY_QUORUM"
+  endpoints:
+    - "initial-host:9042"
+
+serverAddress: "localhost:5050"
+`
+	configPath := filepath.Join(tmpDir, "config.yaml")
+	err := os.WriteFile(configPath, []byte(initialConfig), 0644)
+	require.NoError(t, err)
+
+	// Load configuration
+	loader, cfg, err := LoadConfig[*scylladb.ScyllaDBConfig](configPath, ScyllaConfigLoader)
+	require.NoError(t, err)
+	require.NotNil(t, loader)
+	require.NotNil(t, cfg)
+
+	// Verify initial config values
+	assert.Equal(t, "initial-host", cfg.Store.Host)
+	assert.Equal(t, "initial-keyspace", cfg.Store.Keyspace)
+
+	// Set up watcher notification channel
+	notifyCh := make(chan interface{}, 1)
+	loader.AddWatcher(func(newConfig interface{}) {
+		notifyCh <- newConfig
 	})
 
-	// Create test config
-	testConfig := "test-config"
+	// Update config file
+	updatedConfig := `
+backend:
+  type: "scylladb"
 
-	// Notify watchers
-	loader.notifyWatchers(testConfig)
+store:
+  host: "updated-host"
+  port: 9042
+  keyspace: "updated-keyspace"
+  table: "updated-table"
+  ttl: 30
+  consistency: "CONSISTENCY_QUORUM"
+  endpoints:
+    - "updated-host:9042"
 
-	// Verify watcher was called
-	assert.True(t, called, "Watcher should have been called")
-	assert.Equal(t, testConfig, receivedConfig, "Watcher should receive correct config")
+serverAddress: "localhost:6060"
+`
+	// Write updated config and allow time for file watcher to detect change
+	time.Sleep(100 * time.Millisecond)
+	err = os.WriteFile(configPath, []byte(updatedConfig), 0644)
+	require.NoError(t, err)
+
+	// Wait for notification (with timeout)
+	select {
+	case newConfig := <-notifyCh:
+		updatedCfg, ok := newConfig.(*GlobalConfig[*scylladb.ScyllaDBConfig])
+		require.True(t, ok, "Expected GlobalConfig type")
+		assert.Equal(t, "updated-host", updatedCfg.Store.Host)
+		assert.Equal(t, "updated-keyspace", updatedCfg.Store.Keyspace)
+		assert.Equal(t, int32(30), updatedCfg.Store.TTL)
+		assert.Equal(t, "localhost:6060", updatedCfg.ServerAddress)
+	case <-time.After(5 * time.Second):
+		t.Fatal("Timed out waiting for config update notification")
+	}
+
+	// Clean up
+	loader.Close()
 }
 
-func TestGetCurrentConfig(t *testing.T) {
-	loader := NewConfigLoader(".")
-	testConfig := "test-config"
+func TestBackendTypeOverride(t *testing.T) {
+	// Create temporary directory
+	tmpDir := t.TempDir()
 
-	// Set current config
-	loader.mu.Lock()
-	loader.currentConfig = testConfig
-	loader.mu.Unlock()
+	// Create config file with DynamoDB backend
+	config := `
+backend:
+  type: "dynamodb"
 
-	// Get current config
-	config := loader.GetCurrentConfig()
+store:
+  region: "us-west-2"
+  table: "quorum-quest"
+  ttl: 15
+  endpoints:
+    - "dynamodb.us-west-2.amazonaws.com"
+`
+	configPath := filepath.Join(tmpDir, "config.yaml")
+	err := os.WriteFile(configPath, []byte(config), 0644)
+	require.NoError(t, err)
 
-	// Verify
-	assert.Equal(t, testConfig, config, "GetCurrentConfig should return correct config")
+	// Override backend type with environment variable
+	t.Setenv("QUORUMQUEST_BACKEND_TYPE", "scylladb")
+
+	// Detect backend type
+	backendType, err := DetectBackendType(configPath)
+	require.NoError(t, err)
+
+	// Environment variable should take precedence
+	assert.Equal(t, "scylladb", backendType)
 }

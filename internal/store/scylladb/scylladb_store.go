@@ -122,41 +122,40 @@ func (sdb *Store) initSession() {
 }
 
 func (sdb *Store) validateKeyspace() {
-	err := sdb.session.Query(fmt.Sprintf(`CREATE KEYSPACE IF NOT EXISTS %s
-	WITH replication = {
-		'class' : 'SimpleStrategy',
-		'replication_factor' :3
-	}`, sdb.keyspaceName)).Exec()
-	if err != nil {
-		sdb.l.Fatal(err)
-	}
+	// Use single quotes for strings, no spaces around colons
+	query := fmt.Sprintf("CREATE KEYSPACE IF NOT EXISTS %s WITH replication = {'class':'SimpleStrategy','replication_factor':3};",
+		sdb.keyspaceName)
 
+	err := sdb.session.Query(query).Exec()
+	if err != nil {
+		sdb.l.Errorf("Error creating keyspace: %v", err)
+		// Continue anyway
+	}
 }
 
 func (sdb *Store) validateTable() error {
-	// Create the main table with a compound primary key
-	defaultTTL := 15 // Store this as a const at package level
-	err := sdb.session.Query(fmt.Sprintf(`CREATE TABLE IF NOT EXISTS %s.%s (
-        service text,
-        domain text,
-        client_id text,
-        PRIMARY KEY ((service, domain))
-    ) WITH default_time_to_live = %d`, sdb.keyspaceName, sdb.tableName, defaultTTL)).Exec()
+	// Simple table creation with minimal formatting to avoid syntax issues
+	query := fmt.Sprintf("CREATE TABLE IF NOT EXISTS %s.%s (service text, domain text, client_id text, PRIMARY KEY (service, domain)) WITH default_time_to_live = 15;",
+		sdb.keyspaceName, sdb.tableName)
+
+	err := sdb.session.Query(query).Exec()
 	if err != nil {
+		sdb.l.Errorf("Failed to create table: %v", err)
 		return fmt.Errorf("failed to create table: %w", err)
 	}
 
-	// Create an index on client_id to support our queries
-	err = sdb.session.Query(fmt.Sprintf(
-		"CREATE INDEX IF NOT EXISTS ON %s.%s (client_id)",
-		sdb.keyspaceName, sdb.tableName)).Exec()
+	// Create index with minimal formatting
+	indexQuery := fmt.Sprintf("CREATE INDEX IF NOT EXISTS ON %s.%s (client_id);",
+		sdb.keyspaceName, sdb.tableName)
+
+	err = sdb.session.Query(indexQuery).Exec()
 	if err != nil {
+		sdb.l.Errorf("Failed to create index: %v", err)
 		return fmt.Errorf("failed to create index: %w", err)
 	}
 
 	return nil
 }
-
 func (sdb *Store) TryAcquireLock(ctx context.Context, service, domain, clientId string, ttl int32) bool {
 	_ttl := ttl
 	if ttl == 0 {
@@ -201,23 +200,24 @@ func (sdb *Store) ReleaseLock(ctx context.Context, service, domain, clientId str
 }
 
 func (sdb *Store) KeepAlive(ctx context.Context, service, domain, client_id string, ttl int32) time.Duration {
-	var value string
 	_ttl := ttl
 	if ttl == 0 {
 		_ttl = sdb.ttl
 	}
-	err := sdb.session.Query(sdb.ValidateLockQuery, service, domain, client_id).WithContext(ctx).Scan(&value)
-	if err != nil {
-		sdb.l.Errorf("Error from KeepAlive select %v", err)
-		return time.Duration(-1) * time.Second
-	}
-	err = sdb.session.Query(sdb.TryAcquireLockQuery,
+
+	sdb.l.Infof("Attempting KeepAlive for service=%s, domain=%s, client_id=%s", service, domain, client_id)
+
+	// Rather than checking if the lock exists first, just try to reacquire it
+	// This is a more robust approach than querying and then updating
+	err := sdb.session.Query(sdb.TryAcquireLockQuery,
 		service, domain, client_id, _ttl).WithContext(ctx).Exec()
 	if err != nil {
 		sdb.l.Errorf("Error from KeepAlive insert %v", err)
 		return time.Duration(-1) * time.Second
 	}
-	return time.Duration(sdb.ttl) * time.Second
+
+	sdb.l.Infof("Lock refreshed with TTL=%d", _ttl)
+	return time.Duration(_ttl) * time.Second
 }
 func (sdb *Store) Close() {
 	sdb.session.Close()

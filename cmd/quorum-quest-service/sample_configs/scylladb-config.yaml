@@ -1,32 +1,19 @@
-# /etc/quorum-quest/scylladb-config.yaml
-backend: scylladb
-
-# Global application settings
-app:
-  name: quorum-quest
-  env: production
-  port: 8080
-  graceful_shutdown_timeout: 30s
-
-# ScyllaDB store configuration
+serverAddress: "localhost:5050"
 store:
-  host: 127.0.0.1
+  host: "127.0.0.1"
   port: 9042
-  keyspace: quorum-quest
-  table: services
+  keyspace: "quorum-quest"
+  table: "services"
   ttl: 15
-  consistency: CONSISTENCY_QUORUM
+  consistency: "CONSISTENCY_QUORUM"
   endpoints:
-    - localhost:9042
-
-# Logger configuration
+    - "localhost:9042"
 logger:
-  level: info
-  format: json
-
-# Observability configuration
+  level: "LOG_LEVELS_INFOLEVEL"
 observability:
-  metrics_address: :9090
-  metrics_path: /metrics
-  tracing_endpoint: http://tempo:14268/api/traces
-  service_name: quorum-quest
+  serviceName: "quorum-quest"
+  serviceVersion: "0.1.0"
+  environment: "development"
+  otelEndpoint: "localhost:4317"
+backend:
+  type: "scylladb"

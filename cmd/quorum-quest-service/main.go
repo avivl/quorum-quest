@@ -1,7 +1,9 @@
+// cmd/quorum-quest-service/main.go
 package main
 
 import (
 	"context"
+	"flag"
 	"fmt"
 	"log"
 	"os"
@@ -9,184 +11,294 @@ import (
 	"syscall"
 
 	"github.com/avivl/quorum-quest/internal/config"
+	"github.com/avivl/quorum-quest/internal/lockservice"
 	"github.com/avivl/quorum-quest/internal/observability"
+	"github.com/avivl/quorum-quest/internal/server"
+	"github.com/avivl/quorum-quest/internal/store"
+	"github.com/avivl/quorum-quest/internal/store/dynamodb"
+	"github.com/avivl/quorum-quest/internal/store/redis"
 	"github.com/avivl/quorum-quest/internal/store/scylladb"
+	"gopkg.in/yaml.v3"
 )
 
-type App struct {
-	logger        *observability.SLogger
-	metrics       *observability.OTelMetrics
-	store         *scylladb.Store
-	otelShutdown  func()
-	configLoader  *config.ConfigLoader
-	currentConfig *config.GlobalConfig[*scylladb.ScyllaDBConfig]
-}
+func main() {
+	// Parse command line flags
+	configPath := flag.String("config", "./config", "Path to configuration file or directory")
+	flag.Parse()
 
-func NewApp(configPath string) (*App, error) {
-	// Load initial configuration
-	loader, cfg, err := config.LoadConfig[*scylladb.ScyllaDBConfig](configPath, config.ScyllaConfigLoader)
+	// Create context that can be canceled
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// Detect backend type from config
+	backendType, err := config.DetectBackendType(*configPath)
 	if err != nil {
-		return nil, fmt.Errorf("failed to load config: %w", err)
+		log.Fatalf("Failed to detect backend type: %v", err)
 	}
 
 	// Initialize logger
-	logger, err := observability.NewLogger(cfg.Logger.Level.GetZapLevel())
+	logger, err := observability.NewLogger(observability.LogLevelInfo.GetZapLevel())
 	if err != nil {
-		return nil, fmt.Errorf("failed to create logger: %w", err)
+		log.Fatalf("Failed to initialize logger: %v", err)
 	}
 
-	// Initialize OpenTelemetry
-	otelShutdown, err := observability.InitProvider(context.Background(), cfg.Observability)
-	if err != nil {
-		return nil, fmt.Errorf("failed to initialize OpenTelemetry: %w", err)
-	}
+	logger.Infof("Starting quorum-quest service with %s backend", backendType)
 
-	// Initialize metrics
-	metrics, err := observability.NewMetricsClient(cfg.Observability, logger)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create metrics client: %w", err)
-	}
+	// Initialize server and store initializer
+	var srv interface{}
+	var storeInit interface{}
 
-	// Initialize store
-	store, err := scylladb.New(context.Background(), cfg.Store, logger)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create store: %w", err)
-	}
+	switch backendType {
+	case "scylladb":
+		configLoader, configObj, err := config.LoadConfig[*scylladb.ScyllaDBConfig](*configPath, config.ScyllaConfigLoader)
+		if err != nil {
+			logger.Fatalf("Failed to load ScyllaDB config: %v", err)
+		}
+		defer configLoader.Close()
 
-	app := &App{
-		logger:        logger,
-		metrics:       metrics,
-		store:         store,
-		otelShutdown:  otelShutdown,
-		configLoader:  loader,
-		currentConfig: cfg,
-	}
+		// Initialize observability
+		cleanup, err := observability.InitProvider(ctx, configObj.Observability)
+		if err != nil {
+			logger.Fatalf("Failed to initialize observability: %v", err)
+		}
+		defer cleanup()
 
-	// Setup configuration watcher
-	app.setupConfigWatcher()
-
-	return app, nil
-}
-
-func (a *App) setupConfigWatcher() {
-	a.configLoader.AddWatcher(func(newConfig interface{}) {
-		cfg, ok := newConfig.(*config.GlobalConfig[*scylladb.ScyllaDBConfig])
-		if !ok {
-			a.logger.Error("Invalid configuration type received")
-			return
+		// Create metrics client
+		metrics, err := observability.NewMetricsClient(configObj.Observability, logger)
+		if err != nil {
+			logger.Fatalf("Failed to create metrics client: %v", err)
 		}
 
-		// Update current configuration
-		a.currentConfig = cfg
-
-		// Handle logger changes
-		if err := a.updateLogger(cfg.Logger); err != nil {
-			a.logger.Errorf("Failed to update logger: %v", err)
+		// Create server with ScyllaDB store
+		srv, err = server.NewServer(
+			configObj,
+			logger,
+			metrics,
+			func(ctx context.Context, cfg *config.GlobalConfig[*scylladb.ScyllaDBConfig], logger *observability.SLogger) (store.Store, error) {
+				// Create ScyllaDB store
+				lockStore, err := lockservice.NewStore(ctx, "scylladb", cfg.Store, logger)
+				if err != nil {
+					return nil, fmt.Errorf("failed to initialize ScyllaDB store: %w", err)
+				}
+				// Since our server expects store.Store but we have store.LockStore, we need to cast if possible
+				storeImpl, ok := lockStore.(store.Store)
+				if !ok {
+					lockStore.Close() // clean up resources
+					return nil, fmt.Errorf("lockStore does not implement store.Store interface")
+				}
+				return storeImpl, nil
+			},
+		)
+		if err != nil {
+			logger.Fatalf("Failed to create server: %v", err)
 		}
 
-		// Handle observability changes
-		if err := a.updateObservability(cfg.Observability); err != nil {
-			a.logger.Errorf("Failed to update observability: %v", err)
+		// Set store initialization function for later use
+		storeInit = func(ctx context.Context, cfg *config.GlobalConfig[*scylladb.ScyllaDBConfig], logger *observability.SLogger) (store.Store, error) {
+			// Create ScyllaDB store
+			lockStore, err := lockservice.NewStore(ctx, "scylladb", cfg.Store, logger)
+			if err != nil {
+				return nil, fmt.Errorf("failed to initialize ScyllaDB store: %w", err)
+			}
+			storeImpl, ok := lockStore.(store.Store)
+			if !ok {
+				lockStore.Close()
+				return nil, fmt.Errorf("lockStore does not implement store.Store interface")
+			}
+			return storeImpl, nil
 		}
 
-		// Handle store changes
-		if err := a.updateStore(cfg.Store); err != nil {
-			a.logger.Errorf("Failed to update store: %v", err)
+	case "dynamodb":
+		configLoader, configObj, err := config.LoadConfig[*dynamodb.DynamoDBConfig](*configPath, config.DynamoConfigLoader)
+		if err != nil {
+			logger.Fatalf("Failed to load DynamoDB config: %v", err)
+		}
+		defer configLoader.Close()
+
+		// Initialize observability
+		cleanup, err := observability.InitProvider(ctx, configObj.Observability)
+		if err != nil {
+			logger.Fatalf("Failed to initialize observability: %v", err)
+		}
+		defer cleanup()
+
+		// Create metrics client
+		metrics, err := observability.NewMetricsClient(configObj.Observability, logger)
+		if err != nil {
+			logger.Fatalf("Failed to create metrics client: %v", err)
 		}
 
-		a.logger.Info("Configuration updated successfully")
-	})
-}
+		// Create server with DynamoDB store
+		srv, err = server.NewServer(
+			configObj,
+			logger,
+			metrics,
+			func(ctx context.Context, cfg *config.GlobalConfig[*dynamodb.DynamoDBConfig], logger *observability.SLogger) (store.Store, error) {
+				// Create DynamoDB store
+				storeImpl, err := dynamodb.NewStore(ctx, cfg.Store, logger)
+				if err != nil {
+					return nil, fmt.Errorf("failed to initialize DynamoDB store: %w", err)
+				}
+				return storeImpl, nil
+			},
+		)
+		if err != nil {
+			logger.Fatalf("Failed to create server: %v", err)
+		}
 
-func (a *App) updateLogger(cfg observability.LoggerConfig) error {
-	// Create new logger with updated level
-	newLogger, err := observability.NewLogger(cfg.Level.GetZapLevel())
-	if err != nil {
-		return fmt.Errorf("failed to create new logger: %w", err)
+		// Store storeInit function for later use
+		storeInit = func(ctx context.Context, cfg *config.GlobalConfig[*dynamodb.DynamoDBConfig], logger *observability.SLogger) (store.Store, error) {
+			storeImpl, err := dynamodb.NewStore(ctx, cfg.Store, logger)
+			if err != nil {
+				return nil, fmt.Errorf("failed to initialize DynamoDB store: %w", err)
+			}
+			return storeImpl, nil
+		}
+
+	case "redis":
+		configLoader, configObj, err := config.LoadConfig[*redis.RedisConfig](*configPath, func(data []byte) (interface{}, error) {
+			// Create a default config
+			defaultConfig := &config.GlobalConfig[*redis.RedisConfig]{
+				Store:         redis.NewRedisConfig(),
+				ServerAddress: "localhost:5050",
+				Logger: observability.LoggerConfig{
+					Level: observability.LogLevelInfo,
+				},
+				Observability: observability.Config{
+					ServiceName:    "quorum-quest",
+					ServiceVersion: "0.1.0",
+					Environment:    "development",
+					OTelEndpoint:   "localhost:4317",
+				},
+				Backend: config.BackendConfig{
+					Type: "redis",
+				},
+			}
+
+			// If we have data, unmarshal it
+			if len(data) > 0 {
+				if err := yaml.Unmarshal(data, defaultConfig); err != nil {
+					return nil, fmt.Errorf("failed to unmarshal Redis config: %w", err)
+				}
+			}
+
+			return defaultConfig, nil
+		})
+		if err != nil {
+			logger.Fatalf("Failed to load Redis config: %v", err)
+		}
+		defer configLoader.Close()
+
+		// Initialize observability
+		cleanup, err := observability.InitProvider(ctx, configObj.Observability)
+		if err != nil {
+			logger.Fatalf("Failed to initialize observability: %v", err)
+		}
+		defer cleanup()
+
+		// Create metrics client
+		metrics, err := observability.NewMetricsClient(configObj.Observability, logger)
+		if err != nil {
+			logger.Fatalf("Failed to create metrics client: %v", err)
+		}
+
+		// Create server with Redis store
+		srv, err = server.NewServer(
+			configObj,
+			logger,
+			metrics,
+			func(ctx context.Context, cfg *config.GlobalConfig[*redis.RedisConfig], logger *observability.SLogger) (store.Store, error) {
+				// Create Redis store
+				lockStore, err := lockservice.NewStore(ctx, "redis", cfg.Store, logger)
+				if err != nil {
+					return nil, fmt.Errorf("failed to initialize Redis store: %w", err)
+				}
+				storeImpl, ok := lockStore.(store.Store)
+				if !ok {
+					lockStore.Close()
+					return nil, fmt.Errorf("lockStore does not implement store.Store interface")
+				}
+				return storeImpl, nil
+			},
+		)
+		if err != nil {
+			logger.Fatalf("Failed to create server: %v", err)
+		}
+
+		// Store storeInit function for later use
+		storeInit = func(ctx context.Context, cfg *config.GlobalConfig[*redis.RedisConfig], logger *observability.SLogger) (store.Store, error) {
+			lockStore, err := lockservice.NewStore(ctx, "redis", cfg.Store, logger)
+			if err != nil {
+				return nil, fmt.Errorf("failed to initialize Redis store: %w", err)
+			}
+			storeImpl, ok := lockStore.(store.Store)
+			if !ok {
+				lockStore.Close()
+				return nil, fmt.Errorf("lockStore does not implement store.Store interface")
+			}
+			return storeImpl, nil
+		}
+
+	default:
+		logger.Fatalf("Unsupported backend type: %s", backendType)
 	}
 
-	// Update logger
-	a.logger = newLogger
-	return nil
-}
+	// Set up signal handling for graceful shutdown
+	signalChan := make(chan os.Signal, 1)
+	signal.Notify(signalChan, syscall.SIGINT, syscall.SIGTERM)
 
-func (a *App) updateObservability(cfg observability.Config) error {
-	// Shutdown existing OpenTelemetry provider
-	if a.otelShutdown != nil {
-		a.otelShutdown()
+	// Start the server based on its type
+	switch s := srv.(type) {
+	case *server.Server[*scylladb.ScyllaDBConfig]:
+		initFunc := storeInit.(func(context.Context, *config.GlobalConfig[*scylladb.ScyllaDBConfig], *observability.SLogger) (store.Store, error))
+		go func() {
+			if err := s.Start(ctx, initFunc); err != nil {
+				logger.Fatalf("Failed to start server: %v", err)
+			}
+		}()
+		logger.Info("Server started")
+
+	case *server.Server[*dynamodb.DynamoDBConfig]:
+		initFunc := storeInit.(func(context.Context, *config.GlobalConfig[*dynamodb.DynamoDBConfig], *observability.SLogger) (store.Store, error))
+		go func() {
+			if err := s.Start(ctx, initFunc); err != nil {
+				logger.Fatalf("Failed to start server: %v", err)
+			}
+		}()
+		logger.Info("Server started")
+
+	case *server.Server[*redis.RedisConfig]:
+		initFunc := storeInit.(func(context.Context, *config.GlobalConfig[*redis.RedisConfig], *observability.SLogger) (store.Store, error))
+		go func() {
+			if err := s.Start(ctx, initFunc); err != nil {
+				logger.Fatalf("Failed to start server: %v", err)
+			}
+		}()
+		logger.Info("Server started")
+
+	default:
+		logger.Fatalf("Unsupported server type")
 	}
-
-	// Initialize new OpenTelemetry provider
-	shutdown, err := observability.InitProvider(context.Background(), cfg)
-	if err != nil {
-		return fmt.Errorf("failed to initialize OpenTelemetry: %w", err)
-	}
-
-	// Update metrics client
-	metrics, err := observability.NewMetricsClient(cfg, a.logger)
-	if err != nil {
-		return fmt.Errorf("failed to create metrics client: %w", err)
-	}
-
-	// Update app state
-	a.otelShutdown = shutdown
-	a.metrics = metrics
-	return nil
-}
-
-func (a *App) updateStore(cfg *scylladb.ScyllaDBConfig) error {
-	// Close existing store
-	if a.store != nil {
-		a.store.Close()
-	}
-
-	// Create new store with updated config
-	store, err := scylladb.New(context.Background(), cfg, a.logger)
-	if err != nil {
-		return fmt.Errorf("failed to create store: %w", err)
-	}
-
-	// Update app state
-	a.store = store
-	return nil
-}
-
-func (a *App) Run() error {
-	// Setup signal handling
-	signals := make(chan os.Signal, 1)
-	signal.Notify(signals, syscall.SIGINT, syscall.SIGTERM)
-
-	a.logger.Info("Application started")
 
 	// Wait for shutdown signal
-	<-signals
+	sig := <-signalChan
+	logger.Infof("Received signal: %v, initiating shutdown", sig)
 
-	return a.Shutdown()
-}
-
-func (a *App) Shutdown() error {
-	a.logger.Info("Shutting down application")
-
-	// Close store
-	if a.store != nil {
-		a.store.Close()
+	// Shutdown server gracefully
+	switch s := srv.(type) {
+	case *server.Server[*scylladb.ScyllaDBConfig]:
+		if err := s.Stop(); err != nil {
+			logger.Errorf("Error shutting down server: %v", err)
+		}
+	case *server.Server[*dynamodb.DynamoDBConfig]:
+		if err := s.Stop(); err != nil {
+			logger.Errorf("Error shutting down server: %v", err)
+		}
+	case *server.Server[*redis.RedisConfig]:
+		if err := s.Stop(); err != nil {
+			logger.Errorf("Error shutting down server: %v", err)
+		}
 	}
 
-	// Shutdown OpenTelemetry
-	if a.otelShutdown != nil {
-		a.otelShutdown()
-	}
-
-	return nil
-}
-
-func main() {
-	app, err := NewApp("/etc/myapp")
-	if err != nil {
-		log.Fatalf("Failed to initialize application: %v", err)
-	}
-
-	if err := app.Run(); err != nil {
-		log.Fatalf("Application error: %v", err)
-	}
+	logger.Info("Server shutdown complete")
 }

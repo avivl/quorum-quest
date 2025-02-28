@@ -1,0 +1,30 @@
+# /etc/quorum-quest/redis-config.yaml
+backend: redis
+
+# Global application settings
+app:
+  name: quorum-quest
+  env: production
+  port: 8080
+  graceful_shutdown_timeout: 30s
+
+# Redis store configuration
+store:
+  host: localhost
+  port: 6379
+  password: ""
+  db: 0
+  ttl: 15
+  replicas: []
+
+# Logger configuration
+logger:
+  level: info
+  format: json
+
+# Observability configuration
+observability:
+  metrics_address: :9090
+  metrics_path: /metrics
+  tracing_endpoint: http://tempo:14268/api/traces
+  service_name: quorum-quest

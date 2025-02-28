@@ -584,7 +584,7 @@ func setupTestServerWithDynamoDB(t *testing.T) (*Server[*dynamodb.DynamoDBConfig
 	// Create store initializer function that uses DynamoDB store
 	storeInitializer := func(ctx context.Context, cfg *config.GlobalConfig[*dynamodb.DynamoDBConfig], logger *observability.SLogger) (store.Store, error) {
 		// Return a new store instance
-		str, err := dynamodb.New(ctx, cfg.Store, logger)
+		str, err := dynamodb.NewStore(ctx, cfg.Store, logger)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create DynamoDB store: %w", err)
 		}

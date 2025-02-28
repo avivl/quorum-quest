@@ -30,8 +30,8 @@ func (s *Store) GetConfig() store.StoreConfig {
 	return s.config
 }
 
-// New creates a new DynamoDB store
-func New(ctx context.Context, config *DynamoDBConfig, logger *observability.SLogger) (*Store, error) {
+// NewStore creates a new DynamoDB store
+func NewStore(ctx context.Context, config *DynamoDBConfig, logger *observability.SLogger) (*Store, error) {
 	if config == nil {
 		return nil, errors.New("config cannot be nil")
 	}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"time"
 )
 
 // Common errors
@@ -54,15 +55,10 @@ func (r *ServiceRecord) UnmarshalJSON(data []byte) error {
 
 // Store defines the interface for service record storage
 type Store interface {
-	// Get retrieves a service record by ID
-	Get(ctx context.Context, id string) (*ServiceRecord, error)
-
-	// Put stores a service record
-	Put(ctx context.Context, record *ServiceRecord) error
-
-	// Delete removes a service record by ID
-	Delete(ctx context.Context, id string) error
-
-	// Close closes the store connection
-	Close() error
+	TryAcquireLock(ctx context.Context, service, domain, clientId string, ttl int32) bool
+	ReleaseLock(ctx context.Context, service, domain, clientId string)
+	KeepAlive(ctx context.Context, service, domain, clientId string, ttl int32) time.Duration
+	Close()
+	// GetConfig returns the current store configuration
+	GetConfig() StoreConfig
 }

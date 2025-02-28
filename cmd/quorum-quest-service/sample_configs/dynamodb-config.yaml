@@ -1,0 +1,33 @@
+# /etc/quorum-quest/dynamodb-config.yaml
+backend: dynamodb
+
+# Global application settings
+app:
+  name: quorum-quest
+  env: production
+  port: 8080
+  graceful_shutdown_timeout: 30s
+
+# DynamoDB store configuration
+store:
+  region: us-west-2
+  table_name: quorum-quest-services
+  endpoint: ""  # Empty for AWS service, set for local testing (e.g., http://localhost:8000)
+  ttl: 15
+  access_key_id: ""     # Optional: Set for local testing or specific credentials
+  secret_access_key: "" # Optional: Set for local testing or specific credentials
+  session_token: ""     # Optional: Set for temporary credentials
+  max_retries: 3
+  create_table: false   # Set to true to automatically create table if it doesn't exist
+
+# Logger configuration
+logger:
+  level: info
+  format: json
+
+# Observability configuration
+observability:
+  metrics_address: :9090
+  metrics_path: /metrics
+  tracing_endpoint: http://tempo:14268/api/traces
+  service_name: quorum-quest

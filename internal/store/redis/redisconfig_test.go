@@ -1,3 +1,4 @@
+// internal/store/redis/redisconfig_test.go
 package redis
 
 import (
@@ -184,4 +185,29 @@ func TestRedisConfig_Clone(t *testing.T) {
 	clone.Replicas[0] = "modified"
 	assert.NotEqual(t, original.Host, clone.Host)
 	assert.NotEqual(t, original.Replicas[0], clone.Replicas[0])
+}
+
+func TestRedisConfig_StoreConfigInterface(t *testing.T) {
+	config := NewRedisConfig()
+
+	// Test GetTableName
+	tableName := config.GetTableName()
+	assert.Equal(t, "redis-store", tableName)
+
+	// Test GetTTL
+	ttl := config.GetTTL()
+	assert.Equal(t, int32(15), ttl)
+
+	// Test GetEndpoints
+	endpoints := config.GetEndpoints()
+	assert.Len(t, endpoints, 1)
+	assert.Equal(t, "localhost:6379", endpoints[0])
+
+	// Test with replicas
+	config.Replicas = []string{"replica1:6379", "replica2:6379"}
+	endpointsWithReplicas := config.GetEndpoints()
+	assert.Len(t, endpointsWithReplicas, 3)
+	assert.Equal(t, "localhost:6379", endpointsWithReplicas[0])
+	assert.Equal(t, "replica1:6379", endpointsWithReplicas[1])
+	assert.Equal(t, "replica2:6379", endpointsWithReplicas[2])
 }

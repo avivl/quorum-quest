@@ -1,3 +1,4 @@
+// internal/store/redis/redis_test.go
 package redis
 
 import (
@@ -113,4 +114,90 @@ func TestRedisStore_InvalidOperations(t *testing.T) {
 	}
 	err = redisStore.Put(ctx, invalidRecord)
 	assert.Error(t, err)
+}
+
+func TestRedisStore_LockOperations(t *testing.T) {
+	redisStore, _, cleanup := setupTestRedis(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	service := "test-service"
+	domain := "test-domain"
+	clientID := "client-1"
+
+	// Test TryAcquireLock
+	success := redisStore.TryAcquireLock(ctx, service, domain, clientID, 0)
+	assert.True(t, success, "First lock acquisition should succeed")
+
+	// Test acquiring the same lock (should fail)
+	success = redisStore.TryAcquireLock(ctx, service, domain, "client-2", 0)
+	assert.False(t, success, "Second lock acquisition should fail")
+
+	// Test ReleaseLock
+	redisStore.ReleaseLock(ctx, service, domain, clientID)
+
+	// Lock should be released, so we can acquire it again
+	success = redisStore.TryAcquireLock(ctx, service, domain, "client-2", 0)
+	assert.True(t, success, "Lock acquisition after release should succeed")
+
+	// Test ReleaseLock with wrong client ID (should not release the lock)
+	redisStore.ReleaseLock(ctx, service, domain, "wrong-client")
+	success = redisStore.TryAcquireLock(ctx, service, domain, "client-3", 0)
+	assert.False(t, success, "Lock should not be released with wrong client ID")
+
+	// Test correct release
+	redisStore.ReleaseLock(ctx, service, domain, "client-2")
+	success = redisStore.TryAcquireLock(ctx, service, domain, "client-3", 0)
+	assert.True(t, success, "Lock should be released with correct client ID")
+}
+
+func TestRedisStore_KeepAlive(t *testing.T) {
+	redisStore, miniRedis, cleanup := setupTestRedis(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	service := "test-service"
+	domain := "test-domain"
+	clientID := "client-1"
+
+	// Acquire lock
+	success := redisStore.TryAcquireLock(ctx, service, domain, clientID, 0)
+	assert.True(t, success, "Lock acquisition should succeed")
+
+	// Keep alive with correct client ID
+	duration := redisStore.KeepAlive(ctx, service, domain, clientID, 0)
+	assert.Equal(t, time.Duration(redisStore.ttl), duration, "KeepAlive should return correct duration")
+
+	// Fast forward almost to expiration
+	miniRedis.FastForward(900 * time.Millisecond)
+
+	// Keep alive again
+	duration = redisStore.KeepAlive(ctx, service, domain, clientID, 0)
+	assert.Equal(t, time.Duration(redisStore.ttl), duration, "KeepAlive should extend TTL")
+
+	// Keep alive with wrong client ID
+	duration = redisStore.KeepAlive(ctx, service, domain, "wrong-client", 0)
+	assert.Equal(t, time.Duration(-1)*time.Second, duration, "KeepAlive should fail with wrong client ID")
+
+	// Fast forward past TTL
+	miniRedis.FastForward(2 * time.Second)
+
+	// Keep alive after expiration
+	duration = redisStore.KeepAlive(ctx, service, domain, clientID, 0)
+	assert.Equal(t, time.Duration(-1)*time.Second, duration, "KeepAlive should fail after expiration")
+}
+
+func TestRedisStore_GetConfig(t *testing.T) {
+	redisStore, _, cleanup := setupTestRedis(t)
+	defer cleanup()
+
+	config := redisStore.GetConfig()
+	assert.NotNil(t, config, "GetConfig should return config")
+
+	// Verify it's the correct type
+	redisConfig, ok := config.(*RedisConfig)
+	assert.True(t, ok, "Config should be of type *RedisConfig")
+	assert.Equal(t, redisStore.config.Host, redisConfig.Host)
+	assert.Equal(t, redisStore.config.Port, redisConfig.Port)
+	assert.Equal(t, redisStore.config.TTL, redisConfig.TTL)
 }

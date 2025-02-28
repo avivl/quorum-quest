@@ -1,4 +1,4 @@
-// internal/store/redis/redsiconfig.go
+// internal/store/redis/redisconfig.go
 
 package redis
 
@@ -94,4 +94,23 @@ func (c *RedisConfig) Clone() *RedisConfig {
 		TTL:      c.TTL,
 		Replicas: replicas,
 	}
+}
+
+// GetTableName returns a placeholder table name since Redis doesn't use tables
+// Implementing this method to satisfy the StoreConfig interface
+func (c *RedisConfig) GetTableName() string {
+	return "redis-store" // This is just a placeholder
+}
+
+// GetTTL returns the configured TTL
+func (c *RedisConfig) GetTTL() int32 {
+	return c.TTL
+}
+
+// GetEndpoints returns a list of Redis endpoints
+func (c *RedisConfig) GetEndpoints() []string {
+	endpoints := make([]string, 0, len(c.Replicas)+1)
+	endpoints = append(endpoints, fmt.Sprintf("%s:%d", c.Host, c.Port))
+	endpoints = append(endpoints, c.Replicas...)
+	return endpoints
 }

@@ -7,6 +7,7 @@ import (
 
 	"github.com/avivl/quorum-quest/internal/observability"
 	"github.com/avivl/quorum-quest/internal/store/dynamodb"
+	"github.com/avivl/quorum-quest/internal/store/redis"
 	"github.com/avivl/quorum-quest/internal/store/scylladb"
 	"gopkg.in/yaml.v3"
 )
@@ -81,4 +82,42 @@ func ScyllaConfigLoader(configData []byte) (interface{}, error) {
 	}
 
 	return defaultConfig, nil
+}
+
+// RedisConfigLoader loads Redis-specific configuration from YAML
+func RedisConfigLoader(config map[string]interface{}) (interface{}, error) {
+	redisCfg := redis.NewRedisConfig()
+
+	if storeMap, ok := config["store"].(map[string]interface{}); ok {
+		if host, ok := storeMap["host"].(string); ok {
+			redisCfg.Host = host
+		}
+
+		if port, ok := storeMap["port"].(int); ok {
+			redisCfg.Port = port
+		}
+
+		if password, ok := storeMap["password"].(string); ok {
+			redisCfg.Password = password
+		}
+
+		if db, ok := storeMap["db"].(int); ok {
+			redisCfg.DB = db
+		}
+
+		if ttl, ok := storeMap["ttl"].(int); ok {
+			redisCfg.TTL = int32(ttl)
+		}
+
+		if replicas, ok := storeMap["replicas"].([]interface{}); ok {
+			redisCfg.Replicas = make([]string, 0, len(replicas))
+			for _, r := range replicas {
+				if replicaStr, ok := r.(string); ok {
+					redisCfg.Replicas = append(redisCfg.Replicas, replicaStr)
+				}
+			}
+		}
+	}
+
+	return redisCfg, nil
 }

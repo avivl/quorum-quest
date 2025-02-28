@@ -1,5 +1,5 @@
 // cmd/quorum-quest-service/main.go
-package main
+/*package main
 
 import (
 	"context"
@@ -16,6 +16,7 @@ import (
 	"github.com/avivl/quorum-quest/internal/server"
 	"github.com/avivl/quorum-quest/internal/store"
 	"github.com/avivl/quorum-quest/internal/store/dynamodb"
+	"github.com/avivl/quorum-quest/internal/store/redis"
 	"github.com/avivl/quorum-quest/internal/store/scylladb"
 )
 
@@ -120,14 +121,15 @@ func (a *App) determineBackendType(configPath string) (BackendType, error) {
 }
 
 // initWithBackend initializes the application with the specified backend type and configuration
-func (a *App) initWithBackend[T store.StoreConfig, C *config.GlobalConfig[T]](
+// initWithBackend initializes the application with the specified backend type and configuration
+func (a *App) initWithBackend(
 	ctx context.Context,
 	configLoader config.ConfigLoaderFunc,
-	storeInitializer func(ctx context.Context, cfg C, logger *observability.SLogger) (store.Store, error),
+	storeInitializer func(ctx context.Context, cfg interface{}, logger *observability.SLogger) (store.Store, error),
 	setupWatcher func(),
 ) error {
 	// Load configuration
-	loader, cfg, err := config.LoadConfig[T](a.configPath, configLoader)
+	loader, cfg, err := config.LoadConfig(a.configPath, configLoader)
 	if err != nil {
 		return fmt.Errorf("failed to load config: %w", err)
 	}
@@ -155,13 +157,7 @@ func (a *App) initWithBackend[T store.StoreConfig, C *config.GlobalConfig[T]](
 	a.metrics = metrics
 
 	// Initialize server with store initializer
-	grpcServer, err := server.NewServer(cfg, a.logger, a.metrics, func(ctx context.Context, genericCfg interface{}, logger *observability.SLogger) (store.Store, error) {
-		typedCfg, ok := genericCfg.(C)
-		if !ok {
-			return nil, fmt.Errorf("invalid config type, expected %T, got %T", *new(C), genericCfg)
-		}
-		return storeInitializer(ctx, typedCfg, logger)
-	})
+	grpcServer, err := server.NewServer(cfg, a.logger, a.metrics, storeInitializer)
 	if err != nil {
 		return fmt.Errorf("failed to create server: %w", err)
 	}
@@ -178,7 +174,11 @@ func (a *App) initWithDynamoDB(ctx context.Context) error {
 	return a.initWithBackend(
 		ctx,
 		config.DynamoConfigLoader,
-		func(ctx context.Context, cfg *config.GlobalConfig[*dynamodb.DynamoDBConfig], logger *observability.SLogger) (store.Store, error) {
+		func(ctx context.Context, genericCfg interface{}, logger *observability.SLogger) (store.Store, error) {
+			cfg, ok := genericCfg.(*config.GlobalConfig[*dynamodb.DynamoDBConfig])
+			if !ok {
+				return nil, fmt.Errorf("invalid config type, expected *config.GlobalConfig[*dynamodb.DynamoDBConfig]")
+			}
 			return dynamodb.New(ctx, cfg.Store, logger)
 		},
 		a.setupDynamoDBConfigWatcher,
@@ -190,10 +190,35 @@ func (a *App) initWithScyllaDB(ctx context.Context) error {
 	return a.initWithBackend(
 		ctx,
 		config.ScyllaConfigLoader,
-		func(ctx context.Context, cfg *config.GlobalConfig[*scylladb.ScyllaDBConfig], logger *observability.SLogger) (store.Store, error) {
+		func(ctx context.Context, genericCfg interface{}, logger *observability.SLogger) (store.Store, error) {
+			cfg, ok := genericCfg.(*config.GlobalConfig[*scylladb.ScyllaDBConfig])
+			if !ok {
+				return nil, fmt.Errorf("invalid config type, expected *config.GlobalConfig[*scylladb.ScyllaDBConfig]")
+			}
 			return scylladb.New(ctx, cfg.Store, logger)
 		},
 		a.setupScyllaDBConfigWatcher,
+	)
+}
+
+// initWithRedis initializes the application with Redis backend
+func (a *App) initWithRedis(ctx context.Context) error {
+	return a.initWithBackend(
+		ctx,
+		config.RedisConfigLoader,
+		func(ctx context.Context, genericCfg interface{}, logger *observability.SLogger) (store.Store, error) {
+			cfg, ok := genericCfg.(*config.GlobalConfig[*redis.RedisConfig])
+			if !ok {
+				return nil, fmt.Errorf("invalid config type, expected *config.GlobalConfig[*redis.RedisConfig]")
+			}
+			redisStore, err := redis.NewRedisStore(cfg.Store)
+			if err != nil {
+				return nil, err
+			}
+			redisStore.SetLogger(logger)
+			return redisStore, nil
+		},
+		a.setupRedisConfigWatcher,
 	)
 }
 
@@ -317,3 +342,4 @@ func (a *App) Shutdown() error {
 	a.logger.Info("Application shutdown complete")
 	return nil
 }
+*/

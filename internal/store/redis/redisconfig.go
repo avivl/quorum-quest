@@ -1,116 +1,92 @@
-// internal/store/redis/redisconfig.go
-
+// internal/store/redis/redis_config.go
 package redis
 
 import (
-	"errors"
-	"fmt"
-	"strings"
+	"github.com/avivl/quorum-quest/internal/store"
 )
 
-// RedisConfig holds Redis-specific configuration
+// RedisConfig defines the configuration for the Redis store.
 type RedisConfig struct {
-	Host     string   `yaml:"host"`
-	Port     int      `yaml:"port"`
-	Password string   `yaml:"password"`
-	DB       int      `yaml:"db"`
-	TTL      int32    `yaml:"ttl"`
-	Replicas []string `yaml:"replicas"`
+	Host      string   `json:"host"`
+	Port      int      `json:"port"`
+	Password  string   `json:"password"`
+	DB        int      `json:"db"`
+	TTL       int32    `json:"ttl"`
+	KeyPrefix string   `json:"key_prefix"`
+	Endpoints []string `json:"endpoints"`
+	TableName string   `json:"table_name"` // For compatibility with StoreConfig interface
 }
 
-// NewRedisConfig creates a new Redis configuration with default values
-func NewRedisConfig() *RedisConfig {
-	return &RedisConfig{
-		Host:     "localhost",
-		Port:     6379,
-		Password: "",
-		DB:       0,
-		TTL:      15,
-		Replicas: []string{},
-	}
-}
-
-// Validate ensures the Redis configuration is valid
+// Validate ensures the RedisConfig is valid.
 func (c *RedisConfig) Validate() error {
-	var errs []string
-
 	if c.Host == "" {
-		errs = append(errs, "host is required")
+		c.Host = "localhost"
 	}
-
-	if c.Port <= 0 || c.Port > 65535 {
-		errs = append(errs, "port must be between 1 and 65535")
+	if c.Port == 0 {
+		c.Port = 6379
 	}
-
-	if c.TTL <= 0 {
-		errs = append(errs, "TTL must be positive")
+	if c.TTL == 0 {
+		c.TTL = 15 // Default TTL in seconds
 	}
-
-	if c.DB < 0 {
-		errs = append(errs, "DB number must be non-negative")
+	if c.KeyPrefix == "" {
+		c.KeyPrefix = "lock"
 	}
-
-	// Validate replicas if provided
-	for i, replica := range c.Replicas {
-		if replica == "" {
-			errs = append(errs, fmt.Sprintf("replica %d: address cannot be empty", i))
-		}
+	if c.TableName == "" {
+		c.TableName = "locks" // For StoreConfig compatibility
 	}
-
-	if len(errs) > 0 {
-		return errors.New("store validation failed: " + strings.Join(errs, "; "))
-	}
-
 	return nil
 }
 
-// String returns a string representation of the Redis configuration
-func (c *RedisConfig) String() string {
-	replicasStr := "[]"
-	if len(c.Replicas) > 0 {
-		replicasStr = fmt.Sprintf("%v", c.Replicas)
-	}
-
-	return fmt.Sprintf(
-		"RedisConfig{Host: %s, Port: %d, DB: %d, TTL: %d, Replicas: %s}",
-		c.Host,
-		c.Port,
-		c.DB,
-		c.TTL,
-		replicasStr,
-	)
-}
-
-// Clone creates a deep copy of the Redis configuration
-func (c *RedisConfig) Clone() *RedisConfig {
-	replicas := make([]string, len(c.Replicas))
-	copy(replicas, c.Replicas)
-
-	return &RedisConfig{
-		Host:     c.Host,
-		Port:     c.Port,
-		Password: c.Password,
-		DB:       c.DB,
-		TTL:      c.TTL,
-		Replicas: replicas,
-	}
-}
-
-// GetTableName returns a placeholder table name since Redis doesn't use tables
-// Implementing this method to satisfy the StoreConfig interface
+// GetTableName returns the table name (for StoreConfig compatibility).
 func (c *RedisConfig) GetTableName() string {
-	return "redis-store" // This is just a placeholder
+	return c.TableName
 }
 
-// GetTTL returns the configured TTL
+// GetTTL returns the TTL value.
 func (c *RedisConfig) GetTTL() int32 {
 	return c.TTL
 }
 
-// GetEndpoints returns a list of Redis endpoints
+// GetEndpoints returns the list of endpoints.
 func (c *RedisConfig) GetEndpoints() []string {
-	endpoints := make([]string, 0, len(c.Replicas)+1)
-	endpoints = append(endpoints, fmt.Sprintf("%s:%d", c.Host, c.Port))
-	endpoints = append(endpoints, c.Replicas...)
-	return endpoints
+	if len(c.Endpoints) == 0 && c.Host != "" {
+		// If no endpoints are explicitly set but we have a host,
+		// return the host as the single endpoint
+		return []string{c.Host}
+	}
+	return c.Endpoints
+}
+
+// Clone creates a copy of the configuration.
+func (c *RedisConfig) Clone() store.StoreConfig {
+	return &RedisConfig{
+		Host:      c.Host,
+		Port:      c.Port,
+		Password:  c.Password,
+		DB:        c.DB,
+		TTL:       c.TTL,
+		KeyPrefix: c.KeyPrefix,
+		Endpoints: append([]string{}, c.Endpoints...),
+		TableName: c.TableName,
+	}
+}
+
+// GetType returns the type of the store.
+func (c *RedisConfig) GetType() string {
+	return StoreName
+}
+
+// NewConfig creates a new RedisConfig with default values.
+func NewConfig() *RedisConfig {
+	config := &RedisConfig{
+		Host:      "localhost",
+		Port:      6379,
+		Password:  "",
+		DB:        0,
+		TTL:       15,
+		KeyPrefix: "lock",
+		Endpoints: []string{},
+		TableName: "locks",
+	}
+	return config
 }

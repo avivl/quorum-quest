@@ -62,6 +62,23 @@ services:
       - tasks-network
     restart: always
 
+  redis:
+    container_name: redis
+    image: redis:latest
+    command: redis-server --appendonly yes
+    ports:
+      - 6379:6379
+    volumes:
+      - ./redis-data:/data
+    networks:
+      - tasks-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    restart: always
+
 networks:
   tasks-network:
     driver: bridge

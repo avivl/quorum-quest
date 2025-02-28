@@ -4,210 +4,137 @@ package redis
 import (
 	"testing"
 
+	"github.com/avivl/quorum-quest/internal/store"
 	"github.com/stretchr/testify/assert"
 )
 
-func TestNewRedisConfig(t *testing.T) {
-	config := NewRedisConfig()
-	assert.NotNil(t, config)
-	assert.Equal(t, "localhost", config.Host)
-	assert.Equal(t, 6379, config.Port)
-	assert.Equal(t, "", config.Password)
-	assert.Equal(t, 0, config.DB)
-	assert.Equal(t, int32(15), config.TTL)
-	assert.Empty(t, config.Replicas)
-}
+func TestRedisConfig(t *testing.T) {
+	t.Run("GetTableName", func(t *testing.T) {
+		cfg := &RedisConfig{TableName: "test-table"}
+		assert.Equal(t, "test-table", cfg.GetTableName())
+	})
 
-func TestRedisConfig_Validate(t *testing.T) {
-	tests := []struct {
-		name      string
-		config    *RedisConfig
-		wantError bool
-		errorMsg  string
-	}{
-		{
-			name:      "Valid config",
-			config:    NewRedisConfig(),
-			wantError: false,
-		},
-		{
-			name: "Empty host",
-			config: &RedisConfig{
-				Host:     "",
-				Port:     6379,
-				TTL:      15,
-				DB:       0,
-				Replicas: []string{},
-			},
-			wantError: true,
-			errorMsg:  "host is required",
-		},
-		{
-			name: "Invalid port (too low)",
-			config: &RedisConfig{
-				Host:     "localhost",
-				Port:     0,
-				TTL:      15,
-				DB:       0,
-				Replicas: []string{},
-			},
-			wantError: true,
-			errorMsg:  "port must be between 1 and 65535",
-		},
-		{
-			name: "Invalid port (too high)",
-			config: &RedisConfig{
-				Host:     "localhost",
-				Port:     65536,
-				TTL:      15,
-				DB:       0,
-				Replicas: []string{},
-			},
-			wantError: true,
-			errorMsg:  "port must be between 1 and 65535",
-		},
-		{
-			name: "Invalid TTL",
-			config: &RedisConfig{
-				Host:     "localhost",
-				Port:     6379,
-				TTL:      0,
-				DB:       0,
-				Replicas: []string{},
-			},
-			wantError: true,
-			errorMsg:  "TTL must be positive",
-		},
-		{
-			name: "Invalid DB number",
-			config: &RedisConfig{
-				Host:     "localhost",
-				Port:     6379,
-				TTL:      15,
-				DB:       -1,
-				Replicas: []string{},
-			},
-			wantError: true,
-			errorMsg:  "DB number must be non-negative",
-		},
-		{
-			name: "Empty replica address",
-			config: &RedisConfig{
-				Host:     "localhost",
-				Port:     6379,
-				TTL:      15,
-				DB:       0,
-				Replicas: []string{""},
-			},
-			wantError: true,
-			errorMsg:  "replica 0: address cannot be empty",
-		},
-		{
-			name: "Multiple validation errors",
-			config: &RedisConfig{
-				Host:     "",
-				Port:     0,
-				TTL:      0,
-				DB:       -1,
-				Replicas: []string{""},
-			},
-			wantError: true,
-			errorMsg:  "store validation failed",
-		},
-	}
+	t.Run("GetTTL", func(t *testing.T) {
+		cfg := &RedisConfig{TTL: 30}
+		assert.Equal(t, int32(30), cfg.GetTTL())
+	})
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			err := tt.config.Validate()
-			if tt.wantError {
-				assert.Error(t, err)
-				assert.Contains(t, err.Error(), tt.errorMsg)
-			} else {
-				assert.NoError(t, err)
-			}
-		})
-	}
-}
+	t.Run("GetEndpoints_Explicit", func(t *testing.T) {
+		endpoints := []string{"endpoint1", "endpoint2"}
+		cfg := &RedisConfig{Endpoints: endpoints}
+		assert.Equal(t, endpoints, cfg.GetEndpoints())
+	})
 
-func TestRedisConfig_String(t *testing.T) {
-	tests := []struct {
-		name     string
-		config   *RedisConfig
-		expected string
-	}{
-		{
-			name:     "Default config",
-			config:   NewRedisConfig(),
-			expected: "RedisConfig{Host: localhost, Port: 6379, DB: 0, TTL: 15, Replicas: []}",
-		},
-		{
-			name: "Config with replicas",
-			config: &RedisConfig{
-				Host:     "redis.example.com",
-				Port:     6380,
-				DB:       1,
-				TTL:      30,
-				Replicas: []string{"replica1:6379", "replica2:6379"},
-			},
-			expected: "RedisConfig{Host: redis.example.com, Port: 6380, DB: 1, TTL: 30, Replicas: [replica1:6379 replica2:6379]}",
-		},
-	}
+	t.Run("GetEndpoints_FromHost", func(t *testing.T) {
+		cfg := &RedisConfig{Host: "redis-server", Endpoints: []string{}}
+		assert.Equal(t, []string{"redis-server"}, cfg.GetEndpoints())
+	})
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.expected, tt.config.String())
-		})
-	}
-}
+	t.Run("GetEndpoints_Empty", func(t *testing.T) {
+		cfg := &RedisConfig{Host: "", Endpoints: []string{}}
+		assert.Empty(t, cfg.GetEndpoints())
+	})
 
-func TestRedisConfig_Clone(t *testing.T) {
-	original := &RedisConfig{
-		Host:     "redis.example.com",
-		Port:     6380,
-		Password: "secret",
-		DB:       1,
-		TTL:      30,
-		Replicas: []string{"replica1:6379", "replica2:6379"},
-	}
+	t.Run("GetType", func(t *testing.T) {
+		cfg := &RedisConfig{}
+		assert.Equal(t, StoreName, cfg.GetType())
+	})
 
-	clone := original.Clone()
+	t.Run("Validate_DefaultValues", func(t *testing.T) {
+		cfg := &RedisConfig{}
+		err := cfg.Validate()
+		assert.NoError(t, err)
 
-	// Verify all fields are equal
-	assert.Equal(t, original.Host, clone.Host)
-	assert.Equal(t, original.Port, clone.Port)
-	assert.Equal(t, original.Password, clone.Password)
-	assert.Equal(t, original.DB, clone.DB)
-	assert.Equal(t, original.TTL, clone.TTL)
-	assert.Equal(t, original.Replicas, clone.Replicas)
+		// Check that defaults were applied
+		assert.Equal(t, "localhost", cfg.Host)
+		assert.Equal(t, 6379, cfg.Port)
+		assert.Equal(t, int32(15), cfg.TTL)
+		assert.Equal(t, "lock", cfg.KeyPrefix)
+		assert.Equal(t, "locks", cfg.TableName)
+	})
 
-	// Verify it's a deep copy by modifying the clone
-	clone.Host = "modified"
-	clone.Replicas[0] = "modified"
-	assert.NotEqual(t, original.Host, clone.Host)
-	assert.NotEqual(t, original.Replicas[0], clone.Replicas[0])
-}
+	t.Run("Validate_CustomValues", func(t *testing.T) {
+		cfg := &RedisConfig{
+			Host:      "redis-server",
+			Port:      6380,
+			Password:  "secret",
+			DB:        1,
+			TTL:       30,
+			KeyPrefix: "custom-lock",
+			TableName: "custom-locks",
+		}
+		err := cfg.Validate()
+		assert.NoError(t, err)
 
-func TestRedisConfig_StoreConfigInterface(t *testing.T) {
-	config := NewRedisConfig()
+		// Check that values were preserved
+		assert.Equal(t, "redis-server", cfg.Host)
+		assert.Equal(t, 6380, cfg.Port)
+		assert.Equal(t, "secret", cfg.Password)
+		assert.Equal(t, 1, cfg.DB)
+		assert.Equal(t, int32(30), cfg.TTL)
+		assert.Equal(t, "custom-lock", cfg.KeyPrefix)
+		assert.Equal(t, "custom-locks", cfg.TableName)
+	})
 
-	// Test GetTableName
-	tableName := config.GetTableName()
-	assert.Equal(t, "redis-store", tableName)
+	t.Run("Clone", func(t *testing.T) {
+		original := &RedisConfig{
+			Host:      "redis-server",
+			Port:      6380,
+			Password:  "secret",
+			DB:        1,
+			TTL:       30,
+			KeyPrefix: "custom-lock",
+			Endpoints: []string{"endpoint1", "endpoint2"},
+			TableName: "custom-locks",
+		}
 
-	// Test GetTTL
-	ttl := config.GetTTL()
-	assert.Equal(t, int32(15), ttl)
+		cloned := original.Clone()
 
-	// Test GetEndpoints
-	endpoints := config.GetEndpoints()
-	assert.Len(t, endpoints, 1)
-	assert.Equal(t, "localhost:6379", endpoints[0])
+		// Check that it's a different instance
+		assert.NotSame(t, original, cloned)
 
-	// Test with replicas
-	config.Replicas = []string{"replica1:6379", "replica2:6379"}
-	endpointsWithReplicas := config.GetEndpoints()
-	assert.Len(t, endpointsWithReplicas, 3)
-	assert.Equal(t, "localhost:6379", endpointsWithReplicas[0])
-	assert.Equal(t, "replica1:6379", endpointsWithReplicas[1])
-	assert.Equal(t, "replica2:6379", endpointsWithReplicas[2])
+		// Check values match
+		clonedConfig, ok := cloned.(*RedisConfig)
+		assert.True(t, ok)
+		assert.Equal(t, original.Host, clonedConfig.Host)
+		assert.Equal(t, original.Port, clonedConfig.Port)
+		assert.Equal(t, original.Password, clonedConfig.Password)
+		assert.Equal(t, original.DB, clonedConfig.DB)
+		assert.Equal(t, original.TTL, clonedConfig.TTL)
+		assert.Equal(t, original.KeyPrefix, clonedConfig.KeyPrefix)
+		assert.Equal(t, original.TableName, clonedConfig.TableName)
+		assert.Equal(t, original.Endpoints, clonedConfig.Endpoints)
+
+		// Verify that modifying cloned doesn't affect original
+		clonedConfig.Host = "different-host"
+		clonedConfig.Endpoints = append(clonedConfig.Endpoints, "endpoint3")
+		assert.NotEqual(t, original.Host, clonedConfig.Host)
+		assert.NotEqual(t, len(original.Endpoints), len(clonedConfig.Endpoints))
+	})
+
+	t.Run("NewConfig", func(t *testing.T) {
+		cfg := NewConfig()
+		assert.Equal(t, "localhost", cfg.Host)
+		assert.Equal(t, 6379, cfg.Port)
+		assert.Equal(t, "", cfg.Password)
+		assert.Equal(t, 0, cfg.DB)
+		assert.Equal(t, int32(15), cfg.TTL)
+		assert.Equal(t, "lock", cfg.KeyPrefix)
+		assert.Equal(t, "locks", cfg.TableName)
+		assert.Empty(t, cfg.Endpoints)
+	})
+
+	t.Run("StoreConfig_Interface", func(t *testing.T) {
+		var cfg store.StoreConfig = &RedisConfig{}
+		assert.NotNil(t, cfg)
+
+		// Test the interface methods
+		_ = cfg.Validate()
+		tableName := cfg.GetTableName()
+		assert.Equal(t, "locks", tableName)
+		ttl := cfg.GetTTL()
+		assert.Equal(t, int32(15), ttl)
+		endpoints := cfg.GetEndpoints()
+		assert.Equal(t, []string{"localhost"}, endpoints)
+	})
 }

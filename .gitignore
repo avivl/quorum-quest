@@ -28,3 +28,5 @@ coverage.html
 c.out
 data
 reds-data
+internal/cons_source.sh
+internal/go_files.txt

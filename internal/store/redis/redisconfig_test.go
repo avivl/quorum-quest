@@ -113,7 +113,7 @@ func TestRedisConfig(t *testing.T) {
 	})
 
 	t.Run("NewConfig", func(t *testing.T) {
-		cfg := NewConfig()
+		cfg := NewRedisConfig()
 		assert.Equal(t, "localhost", cfg.Host)
 		assert.Equal(t, 6379, cfg.Port)
 		assert.Equal(t, "", cfg.Password)

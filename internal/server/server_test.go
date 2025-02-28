@@ -14,12 +14,14 @@ import (
 	"github.com/avivl/quorum-quest/internal/observability"
 	"github.com/avivl/quorum-quest/internal/store"
 	"github.com/avivl/quorum-quest/internal/store/dynamodb"
+	"github.com/avivl/quorum-quest/internal/store/redis"
 	"github.com/avivl/quorum-quest/internal/store/scylladb"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	awsdynamodb "github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
+	redislib "github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
@@ -881,5 +883,393 @@ func TestKeepAliveWithDynamoDB(t *testing.T) {
 
 		// Clean up
 		server.store.ReleaseLock(ctx, "test-service-1", "test-domain-1", "client-1")
+	})
+}
+
+// Helper function to check if Redis is accessible
+func isRedisAccessible(t *testing.T) bool {
+	// Create Redis client with default settings
+	client := redislib.NewClient(&redislib.Options{
+		Addr:     "localhost:6379",
+		Password: "", // No password by default
+		DB:       0,  // Default DB
+	})
+
+	// Try to ping the Redis server
+	_, err := client.Ping(context.Background()).Result()
+	if err != nil {
+		t.Logf("Redis is not accessible: %v", err)
+		return false
+	}
+
+	// Close the client
+	client.Close()
+	return true
+}
+
+func setupTestServerWithRedis(t *testing.T) (*Server[*redis.RedisConfig], context.Context) {
+	// Check if Redis is accessible
+	if !isRedisAccessible(t) {
+		t.Skip("Skipping test because Redis is not accessible")
+		return nil, nil
+	}
+
+	ctx := context.Background()
+
+	// Create Redis config
+	redisConfig := &redis.RedisConfig{
+		Host:      "localhost",
+		Port:      6379,
+		Password:  "",
+		DB:        0,
+		TTL:       30,
+		KeyPrefix: "test-lock",
+		Endpoints: []string{"localhost:6379"},
+		TableName: "locks_test",
+	}
+
+	cfg := &config.GlobalConfig[*redis.RedisConfig]{
+		ServerAddress: "localhost:50053", // Use a different port to avoid conflicts
+		Store:         redisConfig,
+	}
+
+	logger, err := observability.NewLogger(zapcore.InfoLevel, zap.Development())
+	require.NoError(t, err)
+
+	// Initialize metrics with proper configuration
+	metricsConfig := observability.Config{
+		ServiceName:    "test-server-redis",
+		ServiceVersion: "1.0.0",
+		Environment:    "test",
+		OTelEndpoint:   "localhost:4317",
+	}
+
+	serverMetrics, err := observability.NewMetricsClient(metricsConfig, logger)
+	require.NoError(t, err)
+
+	// Create store initializer function that uses Redis store
+	storeInitializer := func(ctx context.Context, cfg *config.GlobalConfig[*redis.RedisConfig], logger *observability.SLogger) (store.Store, error) {
+		// Return a new store instance
+		str, err := redis.New(ctx, cfg.Store, logger)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create Redis store: %w", err)
+		}
+
+		// Wait for the store to be initialized
+		time.Sleep(time.Second * 2)
+
+		return str, nil
+	}
+
+	// Initialize server
+	server, err := NewServer(cfg, logger, serverMetrics, storeInitializer)
+	require.NoError(t, err)
+
+	// Initialize store
+	err = server.initStore(ctx, storeInitializer)
+	require.NoError(t, err)
+
+	// Verify server and store are not nil
+	require.NotNil(t, server, "server should not be nil")
+	require.NotNil(t, server.store, "store should not be nil")
+
+	// Clean Redis test keys
+	cleanupRedisTestKeys(t, ctx)
+
+	return server, ctx
+}
+
+// Helper to clean up test keys in Redis
+func cleanupRedisTestKeys(t *testing.T, ctx context.Context) {
+	client := redislib.NewClient(&redislib.Options{
+		Addr:     "localhost:6379",
+		Password: "",
+		DB:       0,
+	})
+	defer client.Close()
+
+	// Delete all keys with the test-lock prefix
+	keys, err := client.Keys(ctx, "test-lock:*").Result()
+	if err != nil {
+		t.Logf("Error listing Redis keys: %v", err)
+		return
+	}
+
+	if len(keys) > 0 {
+		_, err = client.Del(ctx, keys...).Result()
+		if err != nil {
+			t.Logf("Error deleting Redis keys: %v", err)
+		}
+	}
+
+	// Verify all test keys were deleted
+	keys, _ = client.Keys(ctx, "test-lock:*").Result()
+	if len(keys) > 0 {
+		t.Logf("Warning: Some test keys were not deleted: %v", keys)
+	}
+}
+
+func TestTryAcquireLockWithRedis(t *testing.T) {
+	server, ctx := setupTestServerWithRedis(t)
+	if server == nil {
+		return // Test was skipped
+	}
+
+	defer func() {
+		if err := server.Stop(); err != nil {
+			t.Errorf("failed to stop server: %v", err)
+		}
+	}()
+
+	// Test case 1: Acquire a new lock
+	t.Run("acquire_new_lock", func(t *testing.T) {
+		// Create request
+		req := &pb.TryAcquireLockRequest{
+			Service:  "test-service-1",
+			Domain:   "test-domain-1",
+			ClientId: "client-1",
+			Ttl:      30,
+		}
+
+		// Execute the method
+		resp, err := server.TryAcquireLock(ctx, req)
+
+		// Log the response
+		t.Logf("TryAcquireLock response: %+v", resp)
+
+		// Assertions
+		assert.NoError(t, err)
+		assert.NotNil(t, resp)
+		assert.True(t, resp.IsLeader, "Expected to acquire lock")
+
+		// Clean up
+		server.store.ReleaseLock(ctx, "test-service-1", "test-domain-1", "client-1")
+	})
+
+	// Test case 2: Try to acquire an already held lock
+	t.Run("acquire_existing_lock", func(t *testing.T) {
+		// First acquire the lock
+		success := server.store.TryAcquireLock(ctx, "test-service-2", "test-domain-2", "existing-client", 30)
+		if !success {
+			t.Skip("Could not acquire initial lock, skipping test")
+			return
+		}
+
+		// Create request for second client
+		req := &pb.TryAcquireLockRequest{
+			Service:  "test-service-2",
+			Domain:   "test-domain-2",
+			ClientId: "client-2",
+			Ttl:      30,
+		}
+
+		// Execute the method
+		resp, err := server.TryAcquireLock(ctx, req)
+
+		// Log the response
+		t.Logf("TryAcquireLock response: %+v", resp)
+
+		// Assertions
+		assert.NoError(t, err)
+		assert.NotNil(t, resp)
+		assert.False(t, resp.IsLeader, "Expected not to acquire lock")
+
+		// Clean up
+		server.store.ReleaseLock(ctx, "test-service-2", "test-domain-2", "existing-client")
+	})
+
+	// Test case 3: Acquire a lock after it expires
+	t.Run("acquire_expired_lock", func(t *testing.T) {
+		// First acquire the lock with a short TTL
+		success := server.store.TryAcquireLock(ctx, "test-service-3", "test-domain-3", "existing-client", 1)
+		if !success {
+			t.Skip("Could not acquire initial lock, skipping test")
+			return
+		}
+
+		// Wait for the lock to expire
+		time.Sleep(3 * time.Second)
+
+		// Create request for second client
+		req := &pb.TryAcquireLockRequest{
+			Service:  "test-service-3",
+			Domain:   "test-domain-3",
+			ClientId: "client-3",
+			Ttl:      30,
+		}
+
+		// Execute the method
+		resp, err := server.TryAcquireLock(ctx, req)
+
+		// Log the response
+		t.Logf("TryAcquireLock response: %+v", resp)
+
+		// Assertions
+		assert.NoError(t, err)
+		assert.NotNil(t, resp)
+		assert.True(t, resp.IsLeader, "Expected to acquire lock after expiration")
+
+		// Clean up
+		server.store.ReleaseLock(ctx, "test-service-3", "test-domain-3", "client-3")
+	})
+}
+
+func TestReleaseLockWithRedis(t *testing.T) {
+	server, ctx := setupTestServerWithRedis(t)
+	if server == nil {
+		return // Test was skipped
+	}
+
+	defer func() {
+		if err := server.Stop(); err != nil {
+			t.Errorf("failed to stop server: %v", err)
+		}
+	}()
+
+	// Test case: Release an existing lock
+	t.Run("release_existing_lock", func(t *testing.T) {
+		// First acquire the lock
+		success := server.store.TryAcquireLock(ctx, "test-service-1", "test-domain-1", "client-1", 30)
+		if !success {
+			t.Skip("Could not acquire initial lock, skipping test")
+			return
+		}
+
+		// Create release request
+		req := &pb.ReleaseLockRequest{
+			Service:  "test-service-1",
+			Domain:   "test-domain-1",
+			ClientId: "client-1",
+		}
+
+		// Execute the release
+		resp, err := server.ReleaseLock(ctx, req)
+
+		// Log the response
+		t.Logf("ReleaseLock response: %+v", resp)
+
+		// Assertions
+		assert.NoError(t, err)
+		assert.NotNil(t, resp)
+
+		// Verify the lock was released by trying to acquire it again
+		time.Sleep(time.Second)
+		success = server.store.TryAcquireLock(ctx, "test-service-1", "test-domain-1", "client-1", 30)
+		assert.True(t, success, "Should be able to acquire the lock after release")
+
+		// Clean up
+		server.store.ReleaseLock(ctx, "test-service-1", "test-domain-1", "client-1")
+	})
+
+	// Test case: Release with wrong client ID
+	t.Run("release_wrong_client_id", func(t *testing.T) {
+		// First acquire the lock with one client
+		success := server.store.TryAcquireLock(ctx, "test-service-2", "test-domain-2", "correct-client", 30)
+		if !success {
+			t.Skip("Could not acquire initial lock, skipping test")
+			return
+		}
+
+		// Try to release with wrong client ID
+		req := &pb.ReleaseLockRequest{
+			Service:  "test-service-2",
+			Domain:   "test-domain-2",
+			ClientId: "wrong-client",
+		}
+
+		// Execute the release
+		resp, err := server.ReleaseLock(ctx, req)
+
+		// Assertions
+		assert.NoError(t, err)
+		assert.NotNil(t, resp)
+
+		// Verify the lock is still held by trying to acquire it with a new client
+		success = server.store.TryAcquireLock(ctx, "test-service-2", "test-domain-2", "new-client", 30)
+		assert.False(t, success, "Lock should still be held after release attempt with wrong client ID")
+
+		// Clean up
+		server.store.ReleaseLock(ctx, "test-service-2", "test-domain-2", "correct-client")
+	})
+}
+
+func TestKeepAliveWithRedis(t *testing.T) {
+	server, ctx := setupTestServerWithRedis(t)
+	if server == nil {
+		return // Test was skipped
+	}
+
+	defer func() {
+		if err := server.Stop(); err != nil {
+			t.Errorf("failed to stop server: %v", err)
+		}
+	}()
+
+	// Test case: Keep alive an existing lock
+	t.Run("keep_alive_existing_lock", func(t *testing.T) {
+		// First acquire the lock
+		success := server.store.TryAcquireLock(ctx, "test-service-1", "test-domain-1", "client-1", 5)
+		if !success {
+			t.Skip("Could not acquire initial lock, skipping test")
+			return
+		}
+
+		// Create keep alive request
+		req := &pb.KeepAliveRequest{
+			Service:  "test-service-1",
+			Domain:   "test-domain-1",
+			ClientId: "client-1",
+			Ttl:      30,
+		}
+
+		// Execute the keep alive
+		resp, err := server.KeepAlive(ctx, req)
+
+		// Log the response
+		t.Logf("KeepAlive response: %+v", resp)
+
+		// Assertions
+		assert.NoError(t, err)
+		assert.NotNil(t, resp)
+		assert.NotNil(t, resp.LeaseLength)
+		assert.Greater(t, resp.LeaseLength.Seconds, int64(0), "Expected positive lease length")
+
+		// Verify the lock is still held
+		time.Sleep(time.Second)
+		success = server.store.TryAcquireLock(ctx, "test-service-1", "test-domain-1", "other-client", 30)
+		assert.False(t, success, "Lock should still be held after keep-alive")
+
+		// Clean up
+		server.store.ReleaseLock(ctx, "test-service-1", "test-domain-1", "client-1")
+	})
+
+	// Test case: Keep alive with wrong client ID
+	t.Run("keep_alive_wrong_client_id", func(t *testing.T) {
+		// First acquire the lock with one client
+		success := server.store.TryAcquireLock(ctx, "test-service-2", "test-domain-2", "correct-client", 5)
+		if !success {
+			t.Skip("Could not acquire initial lock, skipping test")
+			return
+		}
+
+		// Try to keep alive with wrong client ID
+		req := &pb.KeepAliveRequest{
+			Service:  "test-service-2",
+			Domain:   "test-domain-2",
+			ClientId: "wrong-client",
+			Ttl:      30,
+		}
+
+		// Execute the keep alive
+		resp, err := server.KeepAlive(ctx, req)
+
+		// Assertions
+		assert.NoError(t, err)
+		assert.NotNil(t, resp)
+		assert.NotNil(t, resp.LeaseLength)
+		assert.Equal(t, int64(-1), resp.LeaseLength.Seconds, "Expected negative lease length for wrong client ID")
+
+		// Clean up
+		server.store.ReleaseLock(ctx, "test-service-2", "test-domain-2", "correct-client")
 	})
 }

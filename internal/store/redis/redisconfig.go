@@ -77,7 +77,7 @@ func (c *RedisConfig) GetType() string {
 }
 
 // NewConfig creates a new RedisConfig with default values.
-func NewConfig() *RedisConfig {
+func NewRedisConfig() *RedisConfig {
 	config := &RedisConfig{
 		Host:      "localhost",
 		Port:      6379,

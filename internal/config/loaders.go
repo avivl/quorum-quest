@@ -109,14 +109,6 @@ func RedisConfigLoader(config map[string]interface{}) (interface{}, error) {
 			redisCfg.TTL = int32(ttl)
 		}
 
-		if replicas, ok := storeMap["replicas"].([]interface{}); ok {
-			redisCfg.Replicas = make([]string, 0, len(replicas))
-			for _, r := range replicas {
-				if replicaStr, ok := r.(string); ok {
-					redisCfg.Replicas = append(redisCfg.Replicas, replicaStr)
-				}
-			}
-		}
 	}
 
 	return redisCfg, nil

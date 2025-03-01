@@ -27,7 +27,7 @@ scratch.txt
 coverage.html
 c.out
 data
-reds-data
+redis-data
 internal/cons_source.sh
 internal/go_files.txt
 client/go/quorum-quest-client/example/example

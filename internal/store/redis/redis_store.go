@@ -22,6 +22,26 @@ var (
 // StoreName the name of the store.
 const StoreName string = "redis"
 
+// Define the interface for the Redis client
+type redisClient interface {
+	SetNX(ctx context.Context, key string, value interface{}, expiration time.Duration) *redis.BoolCmd
+	Get(ctx context.Context, key string) *redis.StringCmd
+	Del(ctx context.Context, keys ...string) *redis.IntCmd
+	Expire(ctx context.Context, key string, expiration time.Duration) *redis.BoolCmd
+	Ping(ctx context.Context) *redis.StatusCmd
+	Close() error
+}
+
+// Variable to hold the function for creating Redis clients, making it possible
+// to replace it during tests
+var newRedisClientFn = func(addr string, password string, db int) redisClientMock {
+	return redis.NewClient(&redis.Options{
+		Addr:     addr,
+		Password: password,
+		DB:       db,
+	})
+}
+
 // init registers the Redis store with the lockservice package.
 func init() {
 	// Register the Redis store with the lockservice package using the StoreName and newStore function.
@@ -41,7 +61,7 @@ func newStore(ctx context.Context, options lockservice.Config, logger *observabi
 
 // Store implements the store.Store interface.
 type Store struct {
-	client    *redis.Client
+	client    redisClientMock
 	ttl       int32
 	l         *observability.SLogger
 	keyPrefix string
@@ -60,11 +80,14 @@ func New(ctx context.Context, config *RedisConfig, logger *observability.SLogger
 		return nil, ErrConfigOptionMissing
 	}
 
-	client := redis.NewClient(&redis.Options{
-		Addr:     fmt.Sprintf("%s:%d", config.Host, config.Port),
-		Password: config.Password,
-		DB:       config.DB,
-	})
+	// Apply default values if needed
+	if err := config.Validate(); err != nil {
+		return nil, err
+	}
+
+	// Create Redis client with the provided configuration
+	addr := fmt.Sprintf("%s:%d", config.Host, config.Port)
+	client := newRedisClientFn(addr, config.Password, config.DB)
 
 	// Test connection
 	_, err := client.Ping(ctx).Result()

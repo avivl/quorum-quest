@@ -151,10 +151,18 @@ func (s *Store) TryAcquireLock(ctx context.Context, service, domain, clientId st
 	pk := fmt.Sprintf("%s:%s", service, domain)
 
 	// Set TTL
-	now := time.Now()
-	expiryTime := now.Add(time.Duration(ttl) * time.Second).Unix()
+	_ttl := ttl
+	if _ttl == 0 {
+		_ttl = s.ttl
+	}
 
-	// Try to insert the item with a condition that it doesn't exist or has expired
+	now := time.Now()
+	expiryTime := now.Add(time.Duration(_ttl) * time.Second).Unix()
+
+	// Try to insert the item with a condition that:
+	// 1. It doesn't exist, OR
+	// 2. It has expired, OR
+	// 3. The current lock is held by the same client
 	_, err := s.client.PutItem(ctx, &dynamodb.PutItemInput{
 		TableName: aws.String(s.tableName),
 		Item: map[string]types.AttributeValue{
@@ -162,9 +170,14 @@ func (s *Store) TryAcquireLock(ctx context.Context, service, domain, clientId st
 			"ClientID":  &types.AttributeValueMemberS{Value: clientId},
 			"ExpiresAt": &types.AttributeValueMemberN{Value: fmt.Sprintf("%d", expiryTime)},
 		},
-		ConditionExpression: aws.String("attribute_not_exists(PK) OR ExpiresAt < :now"),
+		ConditionExpression: aws.String(
+			"attribute_not_exists(PK) OR " + // Lock doesn't exist
+				"ExpiresAt < :now OR " + // Lock has expired
+				"(ClientID = :clientId AND ExpiresAt >= :now)", // Same client can renew its lock
+		),
 		ExpressionAttributeValues: map[string]types.AttributeValue{
-			":now": &types.AttributeValueMemberN{Value: fmt.Sprintf("%d", now.Unix())},
+			":now":      &types.AttributeValueMemberN{Value: fmt.Sprintf("%d", now.Unix())},
+			":clientId": &types.AttributeValueMemberS{Value: clientId},
 		},
 	})
 

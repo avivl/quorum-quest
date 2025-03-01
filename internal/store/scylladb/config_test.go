@@ -1,9 +1,10 @@
-// internal/store/scylladb/scylladbconfig_test.go
+// internal/store/scylladb/config_test.go
 package scylladb
 
 import (
 	"testing"
 
+	"github.com/avivl/quorum-quest/internal/store"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -47,6 +48,7 @@ func TestScyllaDBConfig(t *testing.T) {
 			Endpoints:   []string{"endpoint1"},
 		}
 		assert.Error(t, cfg.Validate())
+		assert.Contains(t, cfg.Validate().Error(), "host is required")
 	})
 
 	t.Run("Validate_Invalid_Port", func(t *testing.T) {
@@ -60,6 +62,7 @@ func TestScyllaDBConfig(t *testing.T) {
 			Endpoints:   []string{"endpoint1"},
 		}
 		assert.Error(t, cfg.Validate())
+		assert.Contains(t, cfg.Validate().Error(), "invalid port")
 	})
 
 	t.Run("Validate_Missing_Keyspace", func(t *testing.T) {
@@ -72,6 +75,7 @@ func TestScyllaDBConfig(t *testing.T) {
 			Endpoints:   []string{"endpoint1"},
 		}
 		assert.Error(t, cfg.Validate())
+		assert.Contains(t, cfg.Validate().Error(), "keyspace is required")
 	})
 
 	t.Run("Validate_Missing_Table", func(t *testing.T) {
@@ -84,6 +88,7 @@ func TestScyllaDBConfig(t *testing.T) {
 			Endpoints:   []string{"endpoint1"},
 		}
 		assert.Error(t, cfg.Validate())
+		assert.Contains(t, cfg.Validate().Error(), "table is required")
 	})
 
 	t.Run("Validate_Invalid_TTL", func(t *testing.T) {
@@ -97,6 +102,7 @@ func TestScyllaDBConfig(t *testing.T) {
 			Endpoints:   []string{"endpoint1"},
 		}
 		assert.Error(t, cfg.Validate())
+		assert.Contains(t, cfg.Validate().Error(), "invalid TTL")
 	})
 
 	t.Run("Validate_Missing_Consistency", func(t *testing.T) {
@@ -109,6 +115,7 @@ func TestScyllaDBConfig(t *testing.T) {
 			Endpoints: []string{"endpoint1"},
 		}
 		assert.Error(t, cfg.Validate())
+		assert.Contains(t, cfg.Validate().Error(), "consistency level is required")
 	})
 
 	t.Run("Validate_No_Endpoints", func(t *testing.T) {
@@ -121,6 +128,7 @@ func TestScyllaDBConfig(t *testing.T) {
 			Consistency: "CONSISTENCY_QUORUM",
 		}
 		assert.Error(t, cfg.Validate())
+		assert.Contains(t, cfg.Validate().Error(), "at least one endpoint is required")
 	})
 
 	t.Run("NewScyllaDBConfig", func(t *testing.T) {
@@ -132,5 +140,14 @@ func TestScyllaDBConfig(t *testing.T) {
 		assert.Equal(t, int32(15), cfg.TTL)
 		assert.Equal(t, "CONSISTENCY_QUORUM", cfg.Consistency)
 		assert.Equal(t, []string{"localhost:9042"}, cfg.Endpoints)
+	})
+
+	t.Run("implements_storeconfig_interface", func(t *testing.T) {
+		// Create a config instance
+		config := NewScyllaDBConfig()
+
+		// Check if it implements the store.StoreConfig interface
+		var i store.StoreConfig = config
+		assert.NotNil(t, i)
 	})
 }

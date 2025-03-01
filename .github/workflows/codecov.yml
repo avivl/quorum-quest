@@ -23,7 +23,7 @@ jobs:
         run: go mod download
 
       - name: Run tests
-        run: go test $(go list ./internal/... | grep -v "/server" |grep -v "/api") -coverprofile=coverage.txt
+        run: go test $(go list ./internal/...  |grep -v "/api") -coverprofile=coverage.txt
 
       - name: Upload results to Codecov
         uses: codecov/codecov-action@v5

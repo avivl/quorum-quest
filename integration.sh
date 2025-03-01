@@ -51,6 +51,9 @@ wait_for_db
 
 if [ $success = true ]; then
   echo "Connected to scylladb"
+  export SCYLLADB_INTEGRATION_TEST=1
+  export DYNAMODB_INTEGRATION_TEST=1
+  export REDIS_INTEGRATION_TEST=1
   go test ./... -v
   scylla_down
 else

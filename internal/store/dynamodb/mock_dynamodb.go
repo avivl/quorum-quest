@@ -109,6 +109,46 @@ type MockStore struct {
 	waiter    TableExistsWaiterAPI
 }
 
+// getLockKey generates a composite primary key for a lock
+func (s *MockStore) getLockKey(service, domain string) string {
+	return fmt.Sprintf("%s:%s", service, domain)
+}
+
+// ownsLock checks if the provided clientId owns the lock
+func (s *MockStore) ownsLock(item map[string]types.AttributeValue, clientId string) bool {
+	if item == nil {
+		return false
+	}
+
+	clientIDAttr, ok := item["ClientID"]
+	if !ok {
+		return false
+	}
+
+	clientIDValue, ok := clientIDAttr.(*types.AttributeValueMemberS)
+	if !ok {
+		return false
+	}
+
+	return clientIDValue.Value == clientId
+}
+
+// getLockItem retrieves a lock item from DynamoDB
+func (s *MockStore) getLockItem(ctx context.Context, pk string) (map[string]types.AttributeValue, error) {
+	result, err := s.client.GetItem(ctx, &dynamodb.GetItemInput{
+		TableName: aws.String(s.tableName),
+		Key: map[string]types.AttributeValue{
+			"PK": &types.AttributeValueMemberS{Value: pk},
+		},
+	})
+
+	if err != nil {
+		return nil, err
+	}
+
+	return result.Item, nil
+}
+
 // GetConfig implements store.Store interface
 func (s *MockStore) GetConfig() store.StoreConfig {
 	return s.config
@@ -121,7 +161,7 @@ func (s *MockStore) TryAcquireLock(ctx context.Context, service, domain, clientI
 
 	// Set TTL
 	_ttl := ttl
-	if _ttl == 0 {
+	if _ttl <= 0 {
 		_ttl = s.ttl
 	}
 
@@ -189,7 +229,7 @@ func (s *MockStore) KeepAlive(ctx context.Context, service, domain, clientId str
 
 	// Set TTL
 	_ttl := ttl
-	if _ttl == 0 {
+	if _ttl <= 0 {
 		_ttl = s.ttl
 	}
 	expiryTime := time.Now().Add(time.Duration(_ttl) * time.Second).Unix()

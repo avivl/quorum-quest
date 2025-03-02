@@ -109,6 +109,24 @@ func RedisConfigLoader(config map[string]interface{}) (interface{}, error) {
 			redisCfg.TTL = int32(ttl)
 		}
 
+		// Add support for keyPrefix field
+		if keyPrefix, ok := storeMap["keyPrefix"].(string); ok {
+			redisCfg.KeyPrefix = keyPrefix
+		}
+
+		// Add support for tableName field
+		if tableName, ok := storeMap["tableName"].(string); ok {
+			redisCfg.TableName = tableName
+		}
+
+		// Handle endpoints if present
+		if endpoints, ok := storeMap["endpoints"].([]interface{}); ok {
+			for _, endpoint := range endpoints {
+				if ep, ok := endpoint.(string); ok {
+					redisCfg.Endpoints = append(redisCfg.Endpoints, ep)
+				}
+			}
+		}
 	}
 
 	return redisCfg, nil

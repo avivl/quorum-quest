@@ -6,8 +6,14 @@ A Python client library for the Quorum Quest distributed leader election service
 
 ```bash
 # From the client/python directory
-pip install -e .
+chmod +x setup-all.sh
+./setup-all.sh
 ```
+
+The setup script will:
+1. Copy the necessary protobuf files into the package
+2. Install the package in development mode
+3. Set everything up for you to run the examples
 
 ## Usage
 
@@ -91,11 +97,28 @@ See the `example/main.py` script for a complete example application that demonst
 - Running leader-specific tasks
 - Proper cleanup on shutdown
 
-Run the example with:
+After running the setup script, you can run the example with:
 
 ```bash
-python example/main.py --server localhost:5050 --service my-service
+python example/main.py --server localhost:5050 --service my-service --domain production
 ```
+
+Command line options:
+- `--server` - The server address (default: localhost:5050)
+- `--service` - The service name (default: example-service)
+- `--domain` - The domain name (default: production)
+- `--ttl` - The lock TTL in seconds (default: 15)
+
+## Troubleshooting
+
+If you encounter import errors or other issues:
+
+1. Make sure you've run the `setup-all.sh` script
+2. Check that the protobuf files exist in `quorum_quest_client/proto/`
+3. Ensure your Python environment has all dependencies installed:
+   ```bash
+   pip install grpcio protobuf
+   ```
 
 ## API Reference
 

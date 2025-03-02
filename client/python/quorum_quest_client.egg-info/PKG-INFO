@@ -1,0 +1,14 @@
+Metadata-Version: 2.2
+Name: quorum-quest-client
+Version: 0.1.0
+Summary: Python client for the Quorum Quest leader election service
+Author: Quorum Quest Team
+Author-email: info@quorumquest.io
+Requires-Python: >=3.7
+Requires-Dist: grpcio>=1.50.0
+Requires-Dist: protobuf>=4.21.0
+Dynamic: author
+Dynamic: author-email
+Dynamic: requires-dist
+Dynamic: requires-python
+Dynamic: summary

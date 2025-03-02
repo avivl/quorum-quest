@@ -9,6 +9,7 @@ import (
 	"time"
 
 	pb "github.com/avivl/quorum-quest/api/gen/go/v1"
+	"github.com/avivl/quorum-quest/internal/lockservice"
 	"github.com/google/uuid"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
@@ -27,6 +28,8 @@ type QuorumQuestClient struct {
 	id              string
 	ldClient        pb.LeaderElectionServiceClient
 	conn            *grpc.ClientConn
+	callbacks       lockservice.Callbacks
+	isLeader        bool
 }
 
 // Option is a function that configures a QuorumQuestClient
@@ -44,6 +47,15 @@ func WithClientID(id string) Option {
 	return func(q *QuorumQuestClient) {
 		if id != "" {
 			q.id = id
+		}
+	}
+}
+
+// WithCallbacks allows setting callbacks for leadership changes
+func WithCallbacks(callbacks lockservice.Callbacks) Option {
+	return func(q *QuorumQuestClient) {
+		if callbacks != nil {
+			q.callbacks = callbacks
 		}
 	}
 }
@@ -86,6 +98,8 @@ func NewQuorumQuestClient(service string, domain string, ttl time.Duration, addr
 		domain:         domain,
 		ldClient:       ldClient,
 		conn:           conn,
+		callbacks:      &lockservice.NoOpCallbacks{},
+		isLeader:       false,
 	}
 
 	// Apply any custom options
@@ -120,11 +134,28 @@ func (q *QuorumQuestClient) TryAcquireLock(ctx context.Context) (bool, error) {
 		return false, fmt.Errorf("failed to try acquire lock: %w", err)
 	}
 
+	q.mu.Lock()
+	wasLeader := q.isLeader
+	q.isLeader = resp.IsLeader
 	if resp.IsLeader {
-		// If we acquired the lock, start the keepalive timer
-		q.mu.Lock()
 		q.remainingLease = q.ttl
-		q.mu.Unlock()
+	} else {
+		q.remainingLease = time.Duration(-1)
+	}
+	q.mu.Unlock()
+
+	// Notify callbacks about leadership changes
+	if wasLeader != resp.IsLeader {
+		if resp.IsLeader {
+			// Became leader
+			go q.callbacks.OnLeaderElected(true)
+		} else if wasLeader {
+			// Lost leadership
+			go q.callbacks.OnLeaderLost()
+		} else {
+			// Still not leader, but notify of election result
+			go q.callbacks.OnLeaderElected(false)
+		}
 	}
 
 	return resp.IsLeader, nil
@@ -132,6 +163,12 @@ func (q *QuorumQuestClient) TryAcquireLock(ctx context.Context) (bool, error) {
 
 // ReleaseLock releases a previously acquired lock
 func (q *QuorumQuestClient) ReleaseLock(ctx context.Context) error {
+	q.mu.Lock()
+	wasLeader := q.isLeader
+	q.isLeader = false
+	q.remainingLease = time.Duration(-1)
+	q.mu.Unlock()
+
 	req := &pb.ReleaseLockRequest{
 		ClientId: q.id,
 		Service:  q.service,
@@ -143,9 +180,10 @@ func (q *QuorumQuestClient) ReleaseLock(ctx context.Context) error {
 		return fmt.Errorf("failed to release lock: %w", err)
 	}
 
-	q.mu.Lock()
-	q.remainingLease = time.Duration(-1)
-	q.mu.Unlock()
+	// Notify about leadership loss if we were the leader
+	if wasLeader {
+		go q.callbacks.OnLeaderLost()
+	}
 
 	return nil
 }
@@ -165,8 +203,22 @@ func (q *QuorumQuestClient) keepAlive(ctx context.Context) (time.Duration, error
 	}
 
 	lease := resp.LeaseLength.AsDuration()
+
 	q.mu.Lock()
-	q.remainingLease = lease
+	wasLeader := q.isLeader
+
+	// If lease is negative, we're no longer the leader
+	if lease < 0 {
+		q.isLeader = false
+		q.remainingLease = time.Duration(-1)
+
+		// Notify about leadership loss if we were the leader
+		if wasLeader {
+			defer q.callbacks.OnLeaderLost()
+		}
+	} else {
+		q.remainingLease = lease
+	}
 	q.mu.Unlock()
 
 	return lease, nil
@@ -181,7 +233,9 @@ func (q *QuorumQuestClient) GetRemainingLease() time.Duration {
 
 // IsLeader returns true if this client currently holds the lock
 func (q *QuorumQuestClient) IsLeader() bool {
-	return q.GetRemainingLease() > 0
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	return q.isLeader
 }
 
 // StartKeepAlive starts a background goroutine to periodically refresh the lock
@@ -199,7 +253,7 @@ func (q *QuorumQuestClient) StartKeepAlive(ctx context.Context) error {
 	go func() {
 		defer q.notifyWaitGroup.Done()
 
-		// Start with half the TTL to avoid expiration
+		// Start with a third of the TTL to avoid expiration
 		refreshInterval := q.ttl / 3
 		if refreshInterval < 3*time.Second {
 			refreshInterval = 3 * time.Second
@@ -220,16 +274,30 @@ func (q *QuorumQuestClient) StartKeepAlive(ctx context.Context) error {
 
 				if err != nil {
 					q.mu.Lock()
+					wasLeader := q.isLeader
+					q.isLeader = false
 					q.remainingLease = time.Duration(-1)
 					q.mu.Unlock()
+
+					// Notify about leadership loss if we were the leader
+					if wasLeader {
+						go q.callbacks.OnLeaderLost()
+					}
 					return
 				}
 
 				// If server returned a negative lease, we're no longer the leader
 				if lease < 0 {
 					q.mu.Lock()
+					wasLeader := q.isLeader
+					q.isLeader = false
 					q.remainingLease = time.Duration(-1)
 					q.mu.Unlock()
+
+					// Notify about leadership loss if we were the leader
+					if wasLeader {
+						go q.callbacks.OnLeaderLost()
+					}
 					return
 				}
 			}

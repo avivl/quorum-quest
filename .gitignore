@@ -28,9 +28,9 @@ coverage.html
 c.out
 data
 redis-data
-internal/cons_source.sh
-internal/go_files.txt
-internal/mock_files.txt
-internal/test_files.txt
+*cons_source.sh
+*go_files.txt
+*mock_files.txt
+*test_files.txt
 client/go/quorum-quest-client/example/example
 cmd/quorum-quest-service/quorum-quest-service

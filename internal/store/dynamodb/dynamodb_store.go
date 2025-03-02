@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/avivl/quorum-quest/internal/lockservice"
 	"github.com/avivl/quorum-quest/internal/observability"
 	"github.com/avivl/quorum-quest/internal/store"
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -14,6 +15,13 @@ import (
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
+)
+
+// Error definitions
+var (
+	ErrNilConfig = errors.New("config cannot be nil")
+	ErrNilLogger = errors.New("logger cannot be nil")
+	StoreName    = "dynamodb"
 )
 
 // Store implements the store.Store interface for DynamoDB
@@ -25,7 +33,21 @@ type Store struct {
 	config    *DynamoDBConfig
 }
 
-// Add this method to the Store struct to implement the store.Store interface
+// Register the DynamoDB store with the lockservice package
+func init() {
+	lockservice.Register(StoreName, newStore)
+}
+
+// newStore creates a new DynamoDB store instance from configuration
+func newStore(ctx context.Context, options lockservice.Config, logger *observability.SLogger) (store.LockStore, error) {
+	cfg, ok := options.(*DynamoDBConfig)
+	if !ok && options != nil {
+		return nil, &store.InvalidConfigurationError{Store: StoreName, Config: options}
+	}
+	return NewStore(ctx, cfg, logger)
+}
+
+// GetConfig returns the current store configuration
 func (s *Store) GetConfig() store.StoreConfig {
 	return s.config
 }
@@ -33,11 +55,11 @@ func (s *Store) GetConfig() store.StoreConfig {
 // NewStore creates a new DynamoDB store
 func NewStore(ctx context.Context, config *DynamoDBConfig, logger *observability.SLogger) (*Store, error) {
 	if config == nil {
-		return nil, errors.New("config cannot be nil")
+		return nil, ErrNilConfig
 	}
 
 	if logger == nil {
-		return nil, errors.New("logger cannot be nil")
+		return nil, ErrNilLogger
 	}
 
 	// Validate config
@@ -45,39 +67,11 @@ func NewStore(ctx context.Context, config *DynamoDBConfig, logger *observability
 		return nil, err
 	}
 
-	// Create AWS configuration
-	var clientOpts []func(*awsconfig.LoadOptions) error
-
-	// Use custom endpoint if provided
-	if len(config.Endpoints) > 0 {
-		clientOpts = append(clientOpts, awsconfig.WithEndpointResolverWithOptions(
-			aws.EndpointResolverWithOptionsFunc(
-				func(service, region string, options ...interface{}) (aws.Endpoint, error) {
-					return aws.Endpoint{URL: config.Endpoints[0]}, nil
-				},
-			),
-		))
-	}
-
-	// Use static credentials if provided
-	if config.AccessKeyID != "" && config.SecretAccessKey != "" {
-		clientOpts = append(clientOpts, awsconfig.WithCredentialsProvider(
-			credentials.NewStaticCredentialsProvider(config.AccessKeyID, config.SecretAccessKey, ""),
-		))
-	}
-
-	// Set region
-	clientOpts = append(clientOpts, awsconfig.WithRegion(config.Region))
-
-	// Create AWS config
-	awsConfig, err := awsconfig.LoadDefaultConfig(ctx, clientOpts...)
+	// Create AWS client
+	client, err := createDynamoDBClient(ctx, config, logger)
 	if err != nil {
-		logger.Errorf("Failed to load AWS config: %v", err)
-		return nil, fmt.Errorf("failed to load AWS config: %w", err)
+		return nil, err
 	}
-
-	// Create DynamoDB client
-	client := dynamodb.NewFromConfig(awsConfig)
 
 	// Create store
 	store := &Store{
@@ -96,6 +90,42 @@ func NewStore(ctx context.Context, config *DynamoDBConfig, logger *observability
 	return store, nil
 }
 
+// createDynamoDBClient creates a new AWS DynamoDB client from configuration
+func createDynamoDBClient(ctx context.Context, config *DynamoDBConfig, logger *observability.SLogger) (*dynamodb.Client, error) {
+	var clientOpts []func(*awsconfig.LoadOptions) error
+
+	// Add custom endpoint if provided
+	if len(config.Endpoints) > 0 {
+		clientOpts = append(clientOpts, awsconfig.WithEndpointResolverWithOptions(
+			aws.EndpointResolverWithOptionsFunc(
+				func(service, region string, options ...interface{}) (aws.Endpoint, error) {
+					return aws.Endpoint{URL: config.Endpoints[0]}, nil
+				},
+			),
+		))
+	}
+
+	// Add static credentials if provided
+	if config.AccessKeyID != "" && config.SecretAccessKey != "" {
+		clientOpts = append(clientOpts, awsconfig.WithCredentialsProvider(
+			credentials.NewStaticCredentialsProvider(config.AccessKeyID, config.SecretAccessKey, ""),
+		))
+	}
+
+	// Set region
+	clientOpts = append(clientOpts, awsconfig.WithRegion(config.Region))
+
+	// Create AWS config
+	awsConfig, err := awsconfig.LoadDefaultConfig(ctx, clientOpts...)
+	if err != nil {
+		logger.Errorf("Failed to load AWS config: %v", err)
+		return nil, fmt.Errorf("failed to load AWS config: %w", err)
+	}
+
+	// Create DynamoDB client
+	return dynamodb.NewFromConfig(awsConfig), nil
+}
+
 // ensureTableExists checks if the DynamoDB table exists and creates it if it doesn't
 func (s *Store) ensureTableExists(ctx context.Context) error {
 	// Check if table exists
@@ -108,8 +138,18 @@ func (s *Store) ensureTableExists(ctx context.Context) error {
 		return nil
 	}
 
-	// Create table if it doesn't exist
-	_, err = s.client.CreateTable(ctx, &dynamodb.CreateTableInput{
+	// Create the table
+	if err := s.createTable(ctx); err != nil {
+		return err
+	}
+
+	// Wait for table to be active
+	return s.waitForTableActive(ctx)
+}
+
+// createTable creates a new DynamoDB table
+func (s *Store) createTable(ctx context.Context) error {
+	_, err := s.client.CreateTable(ctx, &dynamodb.CreateTableInput{
 		TableName: aws.String(s.tableName),
 		AttributeDefinitions: []types.AttributeDefinition{
 			{
@@ -131,9 +171,13 @@ func (s *Store) ensureTableExists(ctx context.Context) error {
 		return fmt.Errorf("failed to create table: %w", err)
 	}
 
-	// Wait for table to be active
+	return nil
+}
+
+// waitForTableActive waits for the table to become active
+func (s *Store) waitForTableActive(ctx context.Context) error {
 	waiter := dynamodb.NewTableExistsWaiter(s.client)
-	err = waiter.Wait(ctx, &dynamodb.DescribeTableInput{
+	err := waiter.Wait(ctx, &dynamodb.DescribeTableInput{
 		TableName: aws.String(s.tableName),
 	}, 5*time.Minute)
 
@@ -145,24 +189,26 @@ func (s *Store) ensureTableExists(ctx context.Context) error {
 	return nil
 }
 
+// getLockKey generates a composite primary key for a lock
+func (s *Store) getLockKey(service, domain string) string {
+	return fmt.Sprintf("%s:%s", service, domain)
+}
+
+// resolveTTL returns the provided TTL or falls back to the default
+func (s *Store) resolveTTL(ttl int32) int32 {
+	if ttl > 0 {
+		return ttl
+	}
+	return s.ttl
+}
+
 // TryAcquireLock attempts to acquire a lock
 func (s *Store) TryAcquireLock(ctx context.Context, service, domain, clientId string, ttl int32) bool {
-	// Create composite primary key
-	pk := fmt.Sprintf("%s:%s", service, domain)
-
-	// Set TTL
-	_ttl := ttl
-	if _ttl == 0 {
-		_ttl = s.ttl
-	}
-
+	pk := s.getLockKey(service, domain)
+	lockTTL := s.resolveTTL(ttl)
 	now := time.Now()
-	expiryTime := now.Add(time.Duration(_ttl) * time.Second).Unix()
+	expiryTime := now.Add(time.Duration(lockTTL) * time.Second).Unix()
 
-	// Try to insert the item with a condition that:
-	// 1. It doesn't exist, OR
-	// 2. It has expired, OR
-	// 3. The current lock is held by the same client
 	_, err := s.client.PutItem(ctx, &dynamodb.PutItemInput{
 		TableName: aws.String(s.tableName),
 		Item: map[string]types.AttributeValue{
@@ -184,12 +230,37 @@ func (s *Store) TryAcquireLock(ctx context.Context, service, domain, clientId st
 	return err == nil
 }
 
-// ReleaseLock releases a lock
+// ReleaseLock releases a lock if owned by this client
 func (s *Store) ReleaseLock(ctx context.Context, service, domain, clientId string) {
-	// Create composite primary key
-	pk := fmt.Sprintf("%s:%s", service, domain)
+	pk := s.getLockKey(service, domain)
 
 	// First check if this client owns the lock
+	item, err := s.getLockItem(ctx, pk)
+	if err != nil {
+		s.logger.Errorf("Error checking lock ownership: %v", err)
+		return
+	}
+
+	// If no lock exists or client doesn't own it, return
+	if !s.ownsLock(item, clientId) {
+		return
+	}
+
+	// Delete the lock
+	_, err = s.client.DeleteItem(ctx, &dynamodb.DeleteItemInput{
+		TableName: aws.String(s.tableName),
+		Key: map[string]types.AttributeValue{
+			"PK": &types.AttributeValueMemberS{Value: pk},
+		},
+	})
+
+	if err != nil {
+		s.logger.Errorf("Error releasing lock: %v", err)
+	}
+}
+
+// getLockItem retrieves a lock item from DynamoDB
+func (s *Store) getLockItem(ctx context.Context, pk string) (map[string]types.AttributeValue, error) {
 	result, err := s.client.GetItem(ctx, &dynamodb.GetItemInput{
 		TableName: aws.String(s.tableName),
 		Key: map[string]types.AttributeValue{
@@ -198,40 +269,36 @@ func (s *Store) ReleaseLock(ctx context.Context, service, domain, clientId strin
 	})
 
 	if err != nil {
-		s.logger.Errorf("Error checking lock ownership: %v", err)
-		return
+		return nil, err
 	}
 
-	// If item exists and client ID matches, delete it
-	if result.Item != nil {
-		if clientIDAttr, ok := result.Item["ClientID"]; ok {
-			if clientIDAttr.(*types.AttributeValueMemberS).Value == clientId {
-				_, err = s.client.DeleteItem(ctx, &dynamodb.DeleteItemInput{
-					TableName: aws.String(s.tableName),
-					Key: map[string]types.AttributeValue{
-						"PK": &types.AttributeValueMemberS{Value: pk},
-					},
-				})
+	return result.Item, nil
+}
 
-				if err != nil {
-					s.logger.Errorf("Error releasing lock: %v", err)
-				}
-			}
-		}
+// ownsLock checks if the provided clientId owns the lock
+func (s *Store) ownsLock(item map[string]types.AttributeValue, clientId string) bool {
+	if item == nil {
+		return false
 	}
+
+	clientIDAttr, ok := item["ClientID"]
+	if !ok {
+		return false
+	}
+
+	clientIDValue, ok := clientIDAttr.(*types.AttributeValueMemberS)
+	if !ok {
+		return false
+	}
+
+	return clientIDValue.Value == clientId
 }
 
 // KeepAlive refreshes a lock's TTL
 func (s *Store) KeepAlive(ctx context.Context, service, domain, clientId string, ttl int32) time.Duration {
-	// Create composite primary key
-	pk := fmt.Sprintf("%s:%s", service, domain)
-
-	// Set TTL
-	_ttl := ttl
-	if _ttl == 0 {
-		_ttl = s.ttl
-	}
-	expiryTime := time.Now().Add(time.Duration(_ttl) * time.Second).Unix()
+	pk := s.getLockKey(service, domain)
+	lockTTL := s.resolveTTL(ttl)
+	expiryTime := time.Now().Add(time.Duration(lockTTL) * time.Second).Unix()
 
 	// Update the item with a condition that it exists and client ID matches
 	_, err := s.client.UpdateItem(ctx, &dynamodb.UpdateItemInput{
@@ -252,10 +319,10 @@ func (s *Store) KeepAlive(ctx context.Context, service, domain, clientId string,
 		return time.Duration(-1) * time.Second
 	}
 
-	return time.Duration(_ttl) * time.Second
+	return time.Duration(lockTTL) * time.Second
 }
 
-// Close closes the DynamoDB client
+// Close is a no-op for DynamoDB as the client doesn't need explicit closing
 func (s *Store) Close() {
 	// DynamoDB client doesn't need explicit closing
 }

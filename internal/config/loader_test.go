@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/avivl/quorum-quest/internal/store/dynamodb"
+	"github.com/avivl/quorum-quest/internal/store/redis"
 	"github.com/avivl/quorum-quest/internal/store/scylladb"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -150,6 +151,123 @@ store:
 	})
 }
 
+func TestRedisConfigLoader(t *testing.T) {
+	// Test with valid Redis config
+	t.Run("Valid Redis Config", func(t *testing.T) {
+		validConfig := map[string]interface{}{
+			"store": map[string]interface{}{
+				"host":      "test-host",
+				"port":      6379,
+				"password":  "test-password",
+				"db":        2,
+				"ttl":       30,
+				"keyPrefix": "test-prefix",
+				"endpoints": []string{
+					"test-host:6379",
+				},
+				"tableName": "test-table",
+			},
+		}
+
+		config, err := RedisConfigLoader(validConfig)
+		require.NoError(t, err)
+
+		redisConfig, ok := config.(*redis.RedisConfig)
+		require.True(t, ok, "Expected *redis.RedisConfig")
+
+		assert.Equal(t, "test-host", redisConfig.Host)
+		assert.Equal(t, 6379, redisConfig.Port)
+		assert.Equal(t, "test-password", redisConfig.Password)
+		assert.Equal(t, 2, redisConfig.DB)
+		assert.Equal(t, int32(30), redisConfig.TTL)
+		assert.Equal(t, "test-prefix", redisConfig.KeyPrefix)
+		assert.Equal(t, "test-table", redisConfig.TableName)
+	})
+
+	// Test with partial config (should fill in defaults)
+	t.Run("Partial Config", func(t *testing.T) {
+		partialConfig := map[string]interface{}{
+			"store": map[string]interface{}{
+				"host":     "test-host",
+				"password": "test-password",
+			},
+		}
+
+		config, err := RedisConfigLoader(partialConfig)
+		require.NoError(t, err)
+
+		redisConfig, ok := config.(*redis.RedisConfig)
+		require.True(t, ok, "Expected *redis.RedisConfig")
+
+		// Verify provided values
+		assert.Equal(t, "test-host", redisConfig.Host)
+		assert.Equal(t, "test-password", redisConfig.Password)
+
+		// Verify default values for unspecified fields
+		assert.Equal(t, 6379, redisConfig.Port, "Default port should be used")
+		assert.Equal(t, 0, redisConfig.DB, "Default DB should be used")
+		// TTL might not be set explicitly in the loader since NewRedisConfig provides defaults
+		assert.Equal(t, "lock", redisConfig.KeyPrefix, "Default key prefix should be 'lock'")
+	})
+
+	// Test with empty config (should return defaults)
+	t.Run("Empty Config", func(t *testing.T) {
+		emptyConfig := map[string]interface{}{}
+
+		config, err := RedisConfigLoader(emptyConfig)
+		require.NoError(t, err)
+
+		redisConfig, ok := config.(*redis.RedisConfig)
+		require.True(t, ok, "Expected *redis.RedisConfig")
+
+		// Verify default values
+		assert.Equal(t, "localhost", redisConfig.Host)
+		assert.Equal(t, 6379, redisConfig.Port)
+		assert.Equal(t, "", redisConfig.Password)
+		assert.Equal(t, 0, redisConfig.DB)
+		assert.Equal(t, int32(15), redisConfig.TTL)
+		assert.Equal(t, "lock", redisConfig.KeyPrefix)
+		assert.Equal(t, "locks", redisConfig.TableName)
+	})
+
+	// Test with nil config (should return defaults)
+	t.Run("Nil Config", func(t *testing.T) {
+		config, err := RedisConfigLoader(nil)
+		require.NoError(t, err)
+
+		redisConfig, ok := config.(*redis.RedisConfig)
+		require.True(t, ok, "Expected *redis.RedisConfig")
+
+		// Verify default values
+		assert.Equal(t, "localhost", redisConfig.Host)
+		assert.Equal(t, 6379, redisConfig.Port)
+		assert.Equal(t, int32(15), redisConfig.TTL)
+	})
+
+	// Test with invalid config type
+	t.Run("Invalid Config Type", func(t *testing.T) {
+		invalidConfig := map[string]interface{}{
+			"store": map[string]interface{}{
+				"host":      "test-host",
+				"port":      "not-a-number", // Should be an int
+				"ttl":       "not-a-number", // Should be an int
+				"keyPrefix": 12345,          // Should be a string
+				"tableName": 12345,          // Should be a string
+			},
+		}
+
+		config, err := RedisConfigLoader(invalidConfig)
+		require.NoError(t, err) // RedisConfigLoader doesn't return errors for invalid types
+
+		redisConfig, ok := config.(*redis.RedisConfig)
+		require.True(t, ok, "Expected *redis.RedisConfig")
+
+		// Should still have valid default values for port and TTL
+		assert.Equal(t, "test-host", redisConfig.Host)
+		assert.Equal(t, 6379, redisConfig.Port, "Port should be default for invalid type")
+		assert.Equal(t, int32(15), redisConfig.TTL, "TTL should be default for invalid type")
+	})
+}
 func TestLoadFromFile(t *testing.T) {
 	// Create temporary directory
 	tmpDir := t.TempDir()

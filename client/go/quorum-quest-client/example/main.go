@@ -7,11 +7,71 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 	"time"
 
 	quorumquestclient "github.com/avivl/quorum-quest/client/go/quorum-quest-client"
 )
+
+// ExampleCallbacks implements the lockservice.Callbacks interface
+// to demonstrate the event-driven architecture
+type ExampleCallbacks struct {
+	tasksMutex      sync.Mutex
+	leaderTasksStop chan struct{}
+}
+
+// OnLeaderElected is called when leadership status changes
+func (c *ExampleCallbacks) OnLeaderElected(isLeader bool) {
+	if isLeader {
+		fmt.Println("🎉 This node is now the LEADER!")
+		// Start leader-specific tasks
+		c.tasksMutex.Lock()
+		defer c.tasksMutex.Unlock()
+
+		if c.leaderTasksStop != nil {
+			// Already running, don't start again
+			return
+		}
+
+		c.leaderTasksStop = make(chan struct{})
+		go c.runLeaderTasks(c.leaderTasksStop)
+	} else {
+		fmt.Println("⭐ Another node is the leader. Running as follower.")
+	}
+}
+
+// OnLeaderLost is called when this node was the leader but lost leadership
+func (c *ExampleCallbacks) OnLeaderLost() {
+	fmt.Println("❌ Leadership LOST! Stopping leader tasks...")
+
+	// Stop leader-specific tasks
+	c.tasksMutex.Lock()
+	defer c.tasksMutex.Unlock()
+
+	if c.leaderTasksStop != nil {
+		close(c.leaderTasksStop)
+		c.leaderTasksStop = nil
+	}
+}
+
+// runLeaderTasks simulates leader-specific tasks
+func (c *ExampleCallbacks) runLeaderTasks(stopChan chan struct{}) {
+	ticker := time.NewTicker(3 * time.Second)
+	defer ticker.Stop()
+
+	fmt.Println("🚀 Started leader tasks")
+
+	for {
+		select {
+		case <-ticker.C:
+			fmt.Println("⚙️  Performing leader-specific task...")
+		case <-stopChan:
+			fmt.Println("⏹️  Leader tasks stopped")
+			return
+		}
+	}
+}
 
 func main() {
 	// Parse command line arguments or use defaults
@@ -34,21 +94,27 @@ func main() {
 	signal.Notify(signals, syscall.SIGINT, syscall.SIGTERM)
 	go func() {
 		<-signals
-		fmt.Println("\nReceived shutdown signal. Cleaning up...")
+		fmt.Println("\n📣 Received shutdown signal. Cleaning up...")
 		cancel()
 	}()
 
-	// Create a new client
+	// Create callbacks
+	callbacks := &ExampleCallbacks{}
+
+	// Create a new client with callbacks
 	client, err := quorumquestclient.NewQuorumQuestClient(
 		serviceName,
 		"production",
 		15*time.Second,
 		serverAddr,
+		quorumquestclient.WithCallbacks(callbacks),
 	)
 	if err != nil {
 		log.Fatalf("Failed to create client: %v", err)
 	}
 	defer client.Close()
+
+	fmt.Printf("🔄 Connecting to %s for service %s\n", serverAddr, serviceName)
 
 	// Try to acquire the lock
 	isLeader, err := client.TryAcquireLock(ctx)
@@ -57,87 +123,55 @@ func main() {
 	}
 
 	if isLeader {
-		fmt.Println("Successfully acquired leadership lock!")
+		fmt.Println("🔒 Successfully acquired leadership lock!")
 
 		// Start the keepalive process to maintain leadership
 		if err := client.StartKeepAlive(ctx); err != nil {
 			log.Fatalf("Failed to start keep-alive: %v", err)
 		}
-
-		// Run the leader process
-		runLeaderProcess(ctx, client)
 	} else {
-		fmt.Println("Could not acquire leadership lock. Another instance is the leader.")
-
-		// Run as follower or exit
-		runFollowerProcess(ctx)
+		fmt.Println("🔄 Could not acquire leadership lock. Running as follower.")
 	}
-}
 
-func runLeaderProcess(ctx context.Context, client *quorumquestclient.QuorumQuestClient) {
-	// Status ticker to check more frequently
-	statusTicker := time.NewTicker(2 * time.Second)
+	// Setup monitor for leadership status changes
+	statusTicker := time.NewTicker(5 * time.Second)
 	defer statusTicker.Stop()
 
-	// Add recovery logic
-	if !client.IsLeader() {
-		fmt.Println("Already lost leadership before starting leader process!")
-		return
-	}
-
-	fmt.Println("Running as leader! Press Ctrl+C to exit.")
-
+	// This loop will keep the process running and periodically check status
 	for {
 		select {
 		case <-ctx.Done():
-			// Context canceled, clean up
-			fmt.Println("Releasing leadership lock...")
-			if err := client.ReleaseLock(context.Background()); err != nil {
-				log.Printf("Failed to release lock: %v", err)
+			// Context canceled, clean up and exit
+			fmt.Println("🛑 Shutting down...")
+
+			if client.IsLeader() {
+				fmt.Println("🔓 Releasing leadership lock...")
+				if err := client.ReleaseLock(context.Background()); err != nil {
+					log.Printf("Failed to release lock: %v", err)
+				}
 			}
 			return
 
 		case <-statusTicker.C:
-			// Check leadership status more frequently
-			if !client.IsLeader() {
-				fmt.Println("Lost leadership! Trying to reacquire...")
+			if client.IsLeader() {
+				fmt.Printf("✅ Still the leader. Lease remaining: %v\n", client.GetRemainingLease())
+			} else {
+				fmt.Println("🔄 Running as follower, monitoring for leadership changes...")
 
-				// Try to reacquire the lock
+				// Attempt to acquire leadership if not already leader
 				isLeader, err := client.TryAcquireLock(ctx)
 				if err != nil {
-					log.Printf("Failed to try reacquire lock: %v", err)
-					return
+					log.Printf("Warning: Failed to try acquire lock: %v", err)
+					continue
 				}
 
 				if isLeader {
-					fmt.Println("Successfully reacquired leadership!")
+					fmt.Println("🎉 Successfully acquired leadership!")
 					if err := client.StartKeepAlive(ctx); err != nil {
-						log.Printf("Failed to restart keep-alive: %v", err)
-						return
+						log.Printf("Warning: Failed to start keep-alive: %v", err)
 					}
-				} else {
-					fmt.Println("Could not reacquire leadership. Exiting leader process.")
-					return
 				}
 			}
-
-			fmt.Printf("Still the leader. Lease remaining: %v\n", client.GetRemainingLease())
-			performLeaderTask()
 		}
 	}
-}
-
-func runFollowerProcess(ctx context.Context) {
-	fmt.Println("Running as follower! Press Ctrl+C to exit.")
-
-	// Wait until context is canceled
-	<-ctx.Done()
-	fmt.Println("Follower shutting down.")
-}
-
-func performLeaderTask() {
-	// Example of a task that only the leader should perform
-	fmt.Println("Performing leader-specific task...")
-	// Simulate work
-	time.Sleep(100 * time.Millisecond)
 }

@@ -34,3 +34,4 @@ redis-data
 *test_files.txt
 client/go/quorum-quest-client/example/example
 cmd/quorum-quest-service/quorum-quest-service
+client/rust/target/*

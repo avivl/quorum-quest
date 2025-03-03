@@ -1,0 +1,8 @@
+# client/rust/Cargo.toml
+
+[workspace]
+members = [
+    "quorum-quest-client",
+    "example",
+]
+resolver = "2"
